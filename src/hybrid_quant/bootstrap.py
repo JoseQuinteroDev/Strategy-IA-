@@ -100,6 +100,15 @@ def build_application(config_dir: str | Path) -> TradingApplication:
         observation_window=settings.env.observation_window,
         max_steps=settings.env.max_steps,
         reward_mode=settings.env.reward_mode,
+        strategy=strategy,
+        risk_engine=risk_engine,
+        initial_capital=settings.backtest.initial_capital,
+        fee_bps=settings.backtest.fee_bps,
+        slippage_bps=settings.backtest.slippage_bps,
+        intrabar_exit_policy=settings.backtest.intrabar_exit_policy,
+        symbol=settings.market.symbol,
+        execution_timeframe=settings.market.execution_timeframe,
+        filter_timeframe=settings.market.filter_timeframe,
     )
     rl_trainer = DeferredPPOTrainer(
         algorithm=settings.rl.algorithm,

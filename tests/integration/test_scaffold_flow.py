@@ -10,6 +10,7 @@ from hybrid_quant.core import (
     MarketDataBatch,
     PortfolioState,
     SignalSide,
+    StrategySignal,
     StrategyContext,
 )
 from hybrid_quant.env import HybridTradingEnvironment
@@ -109,10 +110,32 @@ class ScaffoldFlowTests(unittest.TestCase):
             observation_window=64,
             max_steps=100,
             reward_mode="risk_adjusted",
+            risk_engine=risk_engine,
+            initial_capital=100000.0,
+            fee_bps=0.0,
+            slippage_bps=0.0,
         )
-        environment.attach_features(features)
-        initial_observation = environment.reset()
-        transition = environment.step(0.0)
+        candidate_signals = [
+            StrategySignal(
+                symbol="BTCUSDT",
+                timestamp=bars[0].timestamp,
+                side=SignalSide.LONG,
+                strength=1.0,
+                rationale="synthetic env candidate",
+                entry_price=bars[0].close,
+                stop_price=bars[0].close - 1.0,
+                target_price=bars[0].close + 1.0,
+                time_stop_bars=12,
+                close_on_session_end=True,
+                entry_reason="synthetic env candidate",
+            ),
+            StrategySignal(symbol="BTCUSDT", timestamp=bars[1].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+            StrategySignal(symbol="BTCUSDT", timestamp=bars[2].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+            StrategySignal(symbol="BTCUSDT", timestamp=bars[3].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+        ]
+        environment.attach_market_data(bars, features, candidate_signals=candidate_signals)
+        initial_observation, reset_info = environment.reset()
+        next_observation, reward, terminated, truncated, info = environment.step(HybridTradingEnvironment.ACTION_TAKE_TRADE)
 
         trainer = DeferredPPOTrainer(algorithm="PPO", total_timesteps=1000000, enabled=False)
         artifact = trainer.fit(environment)
@@ -125,7 +148,13 @@ class ScaffoldFlowTests(unittest.TestCase):
         self.assertFalse(decision.approved)
         self.assertEqual(result.metadata["mode"], "baseline")
         self.assertFalse(report.passed)
-        self.assertIsNotNone(initial_observation.timestamp)
-        self.assertEqual(transition.reward, 0.0)
+        self.assertEqual(initial_observation.shape, environment.observation_space.shape)
+        self.assertEqual(next_observation.shape, environment.observation_space.shape)
+        self.assertIn("observation_keys", reset_info)
+        self.assertNotEqual(reward, 0.0)
+        self.assertFalse(terminated)
+        self.assertFalse(truncated)
+        self.assertTrue(info["risk_approved"])
+        self.assertIn(info["trades_closed"][0], {"stop_loss", "take_profit"})
         self.assertEqual(artifact.status, "deferred")
         self.assertFalse(execution.accepted)
