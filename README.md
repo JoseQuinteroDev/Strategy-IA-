@@ -131,6 +131,37 @@ Tambien puedes usar los entry points:
 - `hq-data-download ...`
 - `hq-data-split ...`
 
+## Baseline reproducible
+
+El baseline end-to-end une:
+
+- descarga o carga de OHLCV
+- limpieza y validacion temporal
+- construccion de features deterministas
+- generacion de senales intradia
+- backtest con costes, slippage, time stop y cierre de sesion
+- reporte reproducible
+
+Ejemplo:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.baseline `
+  --config-dir configs `
+  --start 2024-01-01T00:00:00+00:00 `
+  --end 2024-03-31T23:55:00+00:00 `
+  --output-dir artifacts/baseline-q1-2024
+```
+
+Artefactos generados:
+
+- `ohlcv.csv`
+- `features.csv`
+- `signals.csv`
+- `trades.csv`
+- `report.json`
+- `summary.md`
+
 ## Estado actual
 
 Este scaffold ya deja resuelto:

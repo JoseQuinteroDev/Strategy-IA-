@@ -23,7 +23,7 @@ class WalkForwardValidator(Validator):
         checks = {
             "min_trades": result.trades >= self.min_trades,
             "max_drawdown": result.max_drawdown <= self.max_drawdown_limit,
-            "sharpe_floor": result.metadata.get("sharpe", 0.0) >= self.sharpe_floor,
+            "sharpe_floor": result.sharpe >= self.sharpe_floor,
         }
         passed = all(checks.values())
         summary = (
@@ -37,4 +37,3 @@ class WalkForwardValidator(Validator):
             summary=summary,
             metadata={"walk_forward_splits": self.walk_forward_splits},
         )
-

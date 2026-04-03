@@ -86,7 +86,33 @@ class BacktestRequest:
     bars: Sequence[MarketBar]
     features: Sequence[FeatureSnapshot]
     signal: StrategySignal | None = None
+    signals: Sequence[StrategySignal] = field(default_factory=tuple)
     initial_capital: float = 100000.0
+    risk_per_trade_fraction: float = 0.0025
+    max_leverage: float = 2.0
+    signal_cooldown_bars: int = 0
+    exit_zscore_threshold: float | None = None
+    session_close_hour_utc: int = 23
+    session_close_minute_utc: int = 55
+
+
+@dataclass(slots=True)
+class ExecutedTrade:
+    symbol: str
+    side: SignalSide
+    entry_timestamp: datetime
+    exit_timestamp: datetime
+    entry_price: float
+    exit_price: float
+    quantity: float
+    gross_pnl: float
+    net_pnl: float
+    fees_paid: float
+    return_pct: float
+    bars_held: int
+    exit_reason: str
+    entry_reason: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -96,6 +122,15 @@ class BacktestResult:
     trades: int
     total_return: float
     max_drawdown: float
+    win_rate: float = 0.0
+    payoff: float = 0.0
+    expectancy: float = 0.0
+    sharpe: float = 0.0
+    sortino: float = 0.0
+    calmar: float = 0.0
+    pnl_net: float = 0.0
+    equity_final: float = 0.0
+    trade_records: Sequence[ExecutedTrade] = field(default_factory=tuple)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

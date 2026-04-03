@@ -19,6 +19,7 @@ dependencies = [
 hybrid-quant-data = "hybrid_quant.data.cli:main"
 hq-data-download = "hybrid_quant.data.cli:download_entrypoint"
 hq-data-split = "hybrid_quant.data.cli:split_entrypoint"
+hybrid-quant-baseline = "hybrid_quant.baseline.runner:main"
 
 [project.optional-dependencies]
 dev = [

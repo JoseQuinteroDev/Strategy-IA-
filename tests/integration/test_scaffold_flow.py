@@ -123,7 +123,7 @@ class ScaffoldFlowTests(unittest.TestCase):
         self.assertEqual(len(features), len(bars))
         self.assertEqual(signal.side, SignalSide.FLAT)
         self.assertFalse(decision.approved)
-        self.assertEqual(result.metadata["mode"], "scaffold")
+        self.assertEqual(result.metadata["mode"], "baseline")
         self.assertFalse(report.passed)
         self.assertIsNotNone(initial_observation.timestamp)
         self.assertEqual(transition.reward, 0.0)

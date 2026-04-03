@@ -2,6 +2,7 @@ from .config import Settings, load_settings
 from .contracts import (
     BacktestRequest,
     BacktestResult,
+    ExecutedTrade,
     EnvObservation,
     EnvTransition,
     FeatureSnapshot,
@@ -21,6 +22,7 @@ from .contracts import (
 __all__ = [
     "BacktestRequest",
     "BacktestResult",
+    "ExecutedTrade",
     "EnvObservation",
     "EnvTransition",
     "FeatureSnapshot",
@@ -38,4 +40,3 @@ __all__ = [
     "ValidationReport",
     "load_settings",
 ]
-
