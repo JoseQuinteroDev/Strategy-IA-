@@ -94,6 +94,7 @@ class BacktestRequest:
     exit_zscore_threshold: float | None = None
     session_close_hour_utc: int = 23
     session_close_minute_utc: int = 55
+    intrabar_exit_policy: str | None = None
 
 
 @dataclass(slots=True)

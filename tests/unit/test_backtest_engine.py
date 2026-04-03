@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -126,6 +127,109 @@ class BacktestEngineTests(unittest.TestCase):
         self.assertEqual(result.trades, 1)
         self.assertEqual(result.trade_records[0].exit_reason, "session_close")
 
+    def test_intrabar_policy_stop_first_prefers_stop_when_both_levels_hit(self) -> None:
+        result = self._run_intrabar_collision(policy="stop_first")
+
+        self.assertEqual(result.trades, 1)
+        self.assertEqual(result.trade_records[0].exit_reason, "stop_loss")
+        self.assertLess(result.trade_records[0].net_pnl, 0.0)
+
+    def test_intrabar_policy_target_first_prefers_target_when_both_levels_hit(self) -> None:
+        result = self._run_intrabar_collision(policy="target_first")
+
+        self.assertEqual(result.trades, 1)
+        self.assertEqual(result.trade_records[0].exit_reason, "take_profit")
+        self.assertGreater(result.trade_records[0].net_pnl, 0.0)
+
+    def test_intrabar_policy_conservative_prefers_worse_outcome_when_both_levels_hit(self) -> None:
+        result = self._run_intrabar_collision(policy="conservative")
+
+        self.assertEqual(result.trades, 1)
+        self.assertEqual(result.trade_records[0].exit_reason, "stop_loss")
+        self.assertLess(result.trade_records[0].net_pnl, 0.0)
+
+    def test_invalid_intrabar_policy_raises_clear_error(self) -> None:
+        bars = [
+            _bar(datetime(2024, 1, 1, 0, 0, tzinfo=UTC), 100.0, 100.3, 99.7, 100.0),
+            _bar(datetime(2024, 1, 1, 0, 5, tzinfo=UTC), 100.0, 101.2, 98.8, 100.5),
+        ]
+        features = [_feature(bar.timestamp) for bar in bars]
+        signals = [
+            StrategySignal(
+                symbol="BTCUSDT",
+                timestamp=bars[0].timestamp,
+                side=SignalSide.LONG,
+                strength=1.0,
+                rationale="synthetic long",
+                entry_price=100.0,
+                stop_price=99.0,
+                target_price=101.0,
+            ),
+            StrategySignal(symbol="BTCUSDT", timestamp=bars[1].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+        ]
+
+        engine = IntradayBacktestEngine(
+            initial_capital=10_000.0,
+            fee_bps=0.0,
+            slippage_bps=0.0,
+            latency_ms=0,
+            intrabar_exit_policy="unsupported",
+        )
+
+        with self.assertRaises(ValueError):
+            engine.run(
+                BacktestRequest(
+                    bars=bars,
+                    features=features,
+                    signals=signals,
+                    initial_capital=10_000.0,
+                )
+            )
+
+    def _run_intrabar_collision(self, *, policy: str):
+        start = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        bars = [
+            _bar(start, 100.0, 100.2, 99.8, 100.0),
+            _bar(start + timedelta(minutes=5), 100.0, 101.3, 98.7, 100.2),
+            _bar(start + timedelta(minutes=10), 100.2, 100.5, 99.9, 100.1),
+        ]
+        features = [_feature(bar.timestamp) for bar in bars]
+        signals = [
+            StrategySignal(
+                symbol="BTCUSDT",
+                timestamp=bars[0].timestamp,
+                side=SignalSide.LONG,
+                strength=1.0,
+                rationale="intrabar collision",
+                entry_price=100.0,
+                stop_price=99.0,
+                target_price=101.0,
+                time_stop_bars=12,
+                close_on_session_end=True,
+                entry_reason="intrabar collision",
+            ),
+            StrategySignal(symbol="BTCUSDT", timestamp=bars[1].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+            StrategySignal(symbol="BTCUSDT", timestamp=bars[2].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+        ]
+
+        engine = IntradayBacktestEngine(
+            initial_capital=10_000.0,
+            fee_bps=0.0,
+            slippage_bps=0.0,
+            latency_ms=0,
+            intrabar_exit_policy=policy,
+        )
+        return engine.run(
+            BacktestRequest(
+                bars=bars,
+                features=features,
+                signals=signals,
+                initial_capital=10_000.0,
+                risk_per_trade_fraction=0.01,
+                max_leverage=1.0,
+            )
+        )
+
 
 class BaselineRunnerTests(unittest.TestCase):
     def test_runner_writes_reproducible_artifacts_from_input_frame(self) -> None:
@@ -152,3 +256,58 @@ class BaselineRunnerTests(unittest.TestCase):
             self.assertTrue(artifacts.report_path.exists())
             self.assertTrue(artifacts.summary_path.exists())
 
+            report = json.loads(artifacts.report_path.read_text(encoding="utf-8"))
+            required_keys = {
+                "symbol",
+                "execution_timeframe",
+                "filter_timeframe",
+                "number_of_trades",
+                "win_rate",
+                "payoff",
+                "expectancy",
+                "max_drawdown",
+                "sharpe",
+                "sortino",
+                "calmar",
+                "pnl_net",
+                "total_return",
+                "equity_final",
+                "validation",
+                "backtest",
+            }
+            self.assertTrue(required_keys.issubset(report.keys()))
+            self.assertGreaterEqual(report["number_of_trades"], 0)
+            self.assertGreaterEqual(report["win_rate"], 0.0)
+            self.assertLessEqual(report["win_rate"], 1.0)
+            self.assertGreaterEqual(report["max_drawdown"], 0.0)
+            self.assertAlmostEqual(
+                report["equity_final"],
+                100000.0 + report["pnl_net"],
+                places=6,
+            )
+            self.assertAlmostEqual(
+                report["total_return"],
+                report["pnl_net"] / 100000.0,
+                places=6,
+            )
+            self.assertIn("intrabar_exit_policy", report["backtest"])
+
+            trades_frame = pd.read_csv(artifacts.trades_path)
+            expected_trade_columns = [
+                "symbol",
+                "side",
+                "entry_timestamp",
+                "exit_timestamp",
+                "entry_price",
+                "exit_price",
+                "quantity",
+                "gross_pnl",
+                "net_pnl",
+                "fees_paid",
+                "return_pct",
+                "bars_held",
+                "exit_reason",
+                "entry_reason",
+            ]
+            self.assertEqual(list(trades_frame.columns), expected_trade_columns)
+            self.assertEqual(len(trades_frame), report["number_of_trades"])

@@ -100,6 +100,7 @@ class BacktestConfig:
     fee_bps: float = 4.0
     slippage_bps: float = 2.0
     latency_ms: int = 250
+    intrabar_exit_policy: str = "conservative"
 
 
 @dataclass(slots=True)

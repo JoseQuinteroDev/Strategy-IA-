@@ -51,12 +51,25 @@ class _OpenPosition:
 
 @dataclass(slots=True)
 class IntradayBacktestEngine(BacktestEngine):
+    """Intraday baseline backtester.
+
+    Intrabar ambiguity policy:
+    when the same bar touches both the stop and the target, execution is resolved by
+    `intrabar_exit_policy`:
+
+    - `stop_first`: assume the stop is reached before the target.
+    - `target_first`: assume the target is reached before the stop.
+    - `conservative`: choose the worse PnL outcome for the open position.
+    """
+
     initial_capital: float
     fee_bps: float
     slippage_bps: float
     latency_ms: int
+    intrabar_exit_policy: str = "conservative"
 
     def run(self, request: BacktestRequest) -> BacktestResult:
+        intrabar_policy = self._resolve_intrabar_policy(request.intrabar_exit_policy)
         bars = list(request.bars)
         features = list(request.features)
         signals = self._normalize_signals(request, bars)
@@ -109,6 +122,7 @@ class IntradayBacktestEngine(BacktestEngine):
                     cash=cash,
                     fee_rate=fee_rate,
                     request=request,
+                    intrabar_policy=intrabar_policy,
                 )
                 if trade is not None:
                     trades.append(trade)
@@ -185,6 +199,7 @@ class IntradayBacktestEngine(BacktestEngine):
                 "slippage_bps": self.slippage_bps,
                 "latency_ms": self.latency_ms,
                 "mode": "baseline",
+                "intrabar_exit_policy": intrabar_policy,
                 "equity_curve": [
                     {"timestamp": timestamp.isoformat(), "equity": equity}
                     for timestamp, equity in equity_points
@@ -269,26 +284,22 @@ class IntradayBacktestEngine(BacktestEngine):
         cash: float,
         fee_rate: float,
         request: BacktestRequest,
+        intrabar_policy: str,
     ) -> tuple[ExecutedTrade | None, float, _OpenPosition | None]:
         stop_hit, target_hit = self._intrabar_exit_flags(position, bar)
-        if stop_hit:
+        exit_decision = self._resolve_intrabar_exit(
+            position=position,
+            stop_hit=stop_hit,
+            target_hit=target_hit,
+            intrabar_policy=intrabar_policy,
+        )
+        if exit_decision is not None:
+            exit_reason, exit_price = exit_decision
             trade, updated_cash = self._close_position(
                 position=position,
                 exit_bar=bar,
-                exit_price=position.stop_price,
-                exit_reason="stop_loss",
-                cash=cash,
-                fee_rate=fee_rate,
-                index=index,
-            )
-            return trade, updated_cash, None
-
-        if target_hit:
-            trade, updated_cash = self._close_position(
-                position=position,
-                exit_bar=bar,
-                exit_price=position.target_price,
-                exit_reason="take_profit",
+                exit_price=exit_price,
+                exit_reason=exit_reason,
                 cash=cash,
                 fee_rate=fee_rate,
                 index=index,
@@ -383,6 +394,39 @@ class IntradayBacktestEngine(BacktestEngine):
             return bar.low <= position.stop_price, bar.high >= position.target_price
         return bar.high >= position.stop_price, bar.low <= position.target_price
 
+    def _resolve_intrabar_exit(
+        self,
+        *,
+        position: _OpenPosition,
+        stop_hit: bool,
+        target_hit: bool,
+        intrabar_policy: str,
+    ) -> tuple[str, float] | None:
+        if stop_hit and target_hit:
+            if intrabar_policy == "stop_first":
+                return "stop_loss", position.stop_price
+            if intrabar_policy == "target_first":
+                return "take_profit", position.target_price
+            return self._conservative_intrabar_exit(position)
+
+        if stop_hit:
+            return "stop_loss", position.stop_price
+        if target_hit:
+            return "take_profit", position.target_price
+        return None
+
+    def _conservative_intrabar_exit(self, position: _OpenPosition) -> tuple[str, float]:
+        if position.side == SignalSide.LONG:
+            stop_pnl = position.stop_price - position.entry_price
+            target_pnl = position.target_price - position.entry_price
+        else:
+            stop_pnl = position.entry_price - position.stop_price
+            target_pnl = position.entry_price - position.target_price
+
+        if stop_pnl <= target_pnl:
+            return "stop_loss", position.stop_price
+        return "take_profit", position.target_price
+
     def _equity_value(self, cash: float, position: _OpenPosition | None, close_price: float) -> float:
         if position is None:
             return cash
@@ -475,6 +519,13 @@ class IntradayBacktestEngine(BacktestEngine):
         if step_seconds <= 0.0:
             return 0.0
         return (365.0 * 24.0 * 60.0 * 60.0) / step_seconds
+
+    def _resolve_intrabar_policy(self, override: str | None) -> str:
+        policy = override or self.intrabar_exit_policy
+        allowed = {"stop_first", "target_first", "conservative"}
+        if policy not in allowed:
+            raise ValueError(f"Unsupported intrabar exit policy: {policy}")
+        return policy
 
     def _is_session_close(self, timestamp: object, hour: int, minute: int) -> bool:
         normalized = pd.Timestamp(timestamp).tz_convert("UTC")

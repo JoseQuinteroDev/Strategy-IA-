@@ -105,6 +105,7 @@ class BaselineRunner:
                 exit_zscore_threshold=self.application.settings.strategy.exit_zscore,
                 session_close_hour_utc=self.application.settings.strategy.session_close_hour_utc,
                 session_close_minute_utc=self.application.settings.strategy.session_close_minute_utc,
+                intrabar_exit_policy=self.application.settings.backtest.intrabar_exit_policy,
             )
         )
         validation_report = self.application.validator.validate(result)
@@ -235,6 +236,22 @@ class BaselineRunner:
         return pd.DataFrame(rows)
 
     def _trades_to_frame(self, trades: Sequence[Any]) -> pd.DataFrame:
+        columns = [
+            "symbol",
+            "side",
+            "entry_timestamp",
+            "exit_timestamp",
+            "entry_price",
+            "exit_price",
+            "quantity",
+            "gross_pnl",
+            "net_pnl",
+            "fees_paid",
+            "return_pct",
+            "bars_held",
+            "exit_reason",
+            "entry_reason",
+        ]
         rows = []
         for trade in trades:
             rows.append(
@@ -255,7 +272,7 @@ class BaselineRunner:
                     "entry_reason": trade.entry_reason,
                 }
             )
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows, columns=columns)
 
     def _build_report_payload(
         self,

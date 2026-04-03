@@ -3,4 +3,4 @@ backtest:
   fee_bps: 4.0
   slippage_bps: 2.0
   latency_ms: 250
-
+  intrabar_exit_policy: conservative

@@ -5,8 +5,16 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+.coverage
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
 build/
 dist/
 artifacts/
 data/
-

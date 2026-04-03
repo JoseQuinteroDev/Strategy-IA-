@@ -1,38 +1,45 @@
 # Hybrid Quant Framework
 
-Base profesional y extensible para un framework de trading cuantitativo hibrido orientado a prop firms, construido en Python.
+Framework cuantitativo modular en Python orientado a intradia y preparado para evolucionar hacia un stack hibrido rule-based + RL, con foco inicial en un baseline reproducible y prop-firm friendly.
 
-## Objetivo de esta fase
+## Estado actual
 
-Esta primera fase prepara la arquitectura y el repositorio para el MVP inicial, sin introducir todavia logica compleja de trading ni entrenamiento RL.
+Lo que ya esta implementado:
 
-Scope actual:
+- ingesta OHLCV historica desde Binance REST
+- limpieza temporal, deduplicacion y exportacion
+- features deterministas multi-timeframe
+- estrategia base intradia de mean reversion con filtros `EMA200 1H` y `ADX 1H`
+- backtest baseline con costes, slippage, `SL/TP`, `time stop` y cierre de sesion
+- runner reproducible de baseline con artefactos y reporte
+- tests unitarios e integracion para wiring y contratos principales
+
+Lo que aun no esta implementado:
+
+- Risk Engine completo con guardrails diarios y reglas prop-firm mas duras
+- paper/live execution real
+- entorno RL entrenable
+- PPO, SAC, LSTM o cualquier entrenamiento de agentes
+
+## Universo MVP
 
 - Activo inicial: `BTCUSDT`
 - Timeframe operativo: `5m`
-- Timeframe de filtro: `1H`
+- Timeframe filtro: `1H`
 - Estilo: `intradia`
-- Estrategia base objetivo: `mean reversion` con filtro de tendencia y regimen
-- Orden de construccion: estrategia base -> risk engine -> entorno RL -> PPO
+- Estrategia base: mean reversion con filtro de tendencia y regimen
 
-## Principios de arquitectura
-
-- `src/` layout para separar codigo de aplicacion y entorno de trabajo.
-- Configuracion declarativa por YAML en `configs/`.
-- Modulos desacoplados por responsabilidad: `data`, `features`, `strategy`, `risk`, `backtest`, `env`, `rl`, `validation`, `paper`.
-- Contratos compartidos en `hybrid_quant.core`.
-- Implementaciones scaffold que permiten cableado temprano y evolucion incremental.
-
-## Estructura
+## Arquitectura
 
 ```text
 hybrid-quant-framework/
 |-- configs/
 |-- docs/
-|   `-- spec.md
+|-- scripts/
 |-- src/
 |   `-- hybrid_quant/
 |       |-- backtest/
+|       |-- baseline/
 |       |-- core/
 |       |-- data/
 |       |-- env/
@@ -41,42 +48,65 @@ hybrid-quant-framework/
 |       |-- risk/
 |       |-- rl/
 |       |-- strategy/
-|       |-- validation/
-|       `-- bootstrap.py
-|-- tests/
-|   |-- integration/
-|   `-- unit/
-`-- pyproject.toml
+|       `-- validation/
+`-- tests/
 ```
 
-## Modulos del MVP
+Responsabilidades:
 
-- `data`: contratos de carga y abstracciones para historico, cache y futuras fuentes exchange.
-- `features`: pipeline de features desacoplado del origen de datos.
-- `strategy`: capa de decision para estrategias rule-based y futuras politicas hibridas.
-- `risk`: control de sizing, limites diarios, exposure y reglas prop-firm friendly.
-- `backtest`: simulacion offline y reportes reproducibles.
-- `env`: entorno compatible con futuras integraciones RL.
-- `rl`: scaffolding para entrenamiento futuro, sin implementar PPO todavia.
-- `validation`: walk-forward, filtros de robustez y metricas de aceptacion.
-- `paper`: ejecucion simulada para paper trading y dry runs.
+- `data`: descarga, limpieza, validacion temporal, parquet y splits.
+- `features`: calculo determinista de senales e indicadores.
+- `strategy`: decision rule-based para el baseline intradia.
+- `backtest`: simulacion baseline y metricas.
+- `baseline`: pipeline reproducible end-to-end.
+- `risk`: base de integracion para el siguiente sprint.
+- `env` y `rl`: placeholders estructurales, sin entrenamiento todavia.
 
-## Configuracion
+## Features actuales
 
-La configuracion se distribuye por archivos YAML:
+`build_features(df)` en [deterministic.py](C:/Users/joseq/Documents/Playground/hybrid-quant-framework/src/hybrid_quant/features/deterministic.py) calcula:
 
-- `configs/base.yaml`
-- `configs/data.yaml`
-- `configs/features.yaml`
-- `configs/strategy.yaml`
-- `configs/risk.yaml`
-- `configs/backtest.yaml`
-- `configs/env.yaml`
-- `configs/rl.yaml`
-- `configs/validation.yaml`
-- `configs/paper.yaml`
+- retornos logaritmicos
+- `ATR`
+- `EMA200 1H`
+- `ADX 1H`
+- `VWAP` intradia
+- `EMA50` intradia
+- volatilidad realizada
+- rango de vela
+- z-score de distancia a media
+- variables temporales de hora, dia y sesion
 
-El cargador fusiona los archivos en orden y genera un objeto tipado de settings.
+## Estrategia baseline
+
+La estrategia base usa:
+
+- filtro de tendencia con `EMA200 1H`
+- filtro de regimen con `ADX 1H`
+- mean reversion contra `VWAP` o `EMA50`
+- `SL = 1 ATR`
+- `TP = 1 ATR`
+- `time stop`
+- cierre al final de sesion
+
+Cada senal devuelve:
+
+- direccion
+- precio de entrada
+- stop
+- target
+- `time_stop_bars`
+- motivo de entrada
+
+## Politica intrabar
+
+Cuando una misma vela toca `stop` y `target`, el backtest usa una politica configurable en `configs/backtest.yaml` mediante `intrabar_exit_policy`:
+
+- `stop_first`: asume que el stop se ejecuta antes que el target
+- `target_first`: asume que el target se ejecuta antes que el stop
+- `conservative`: elige el peor resultado economico para la posicion abierta
+
+El valor por defecto actual es `conservative`.
 
 ## Quickstart
 
@@ -86,27 +116,16 @@ python -m venv .venv
 pip install -e .[dev]
 ```
 
-Si vas a ejecutar exportacion Parquet fuera de este entorno, instala tambien las dependencias de datos definidas en `pyproject.toml`.
-
-Para ejecutar los tests base con librerias de la stdlib:
+Tests:
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m unittest discover -s tests -v
 ```
 
-## Ingestion de datos
+## Ingesta de datos
 
-La fase de datos ya incluye:
-
-- descarga historica OHLCV desde Binance REST
-- limpieza de duplicados y orden temporal
-- validacion de indices de tiempo por timeframe
-- exportacion a Parquet
-- split cronologico `train/validation/test`
-- CLI para descargar y partir datasets
-
-Ejemplo de descarga e ingesta completa:
+Descarga OHLCV:
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -116,7 +135,7 @@ python -m hybrid_quant.data download `
   --end 2024-02-01T00:00:00+00:00
 ```
 
-Ejemplo de split sobre un Parquet ya exportado:
+Split de un dataset existente:
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -125,24 +144,9 @@ python -m hybrid_quant.data split `
   --input-path data/raw/BTCUSDT/5m/ohlcv.parquet
 ```
 
-Tambien puedes usar los entry points:
-
-- `hybrid-quant-data download ...`
-- `hq-data-download ...`
-- `hq-data-split ...`
-
 ## Baseline reproducible
 
-El baseline end-to-end une:
-
-- descarga o carga de OHLCV
-- limpieza y validacion temporal
-- construccion de features deterministas
-- generacion de senales intradia
-- backtest con costes, slippage, time stop y cierre de sesion
-- reporte reproducible
-
-Ejemplo:
+Runner completo:
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -151,6 +155,16 @@ python -m hybrid_quant.baseline `
   --start 2024-01-01T00:00:00+00:00 `
   --end 2024-03-31T23:55:00+00:00 `
   --output-dir artifacts/baseline-q1-2024
+```
+
+Alternativa:
+
+```powershell
+$env:PYTHONPATH = "src"
+python scripts/run_baseline.py `
+  --config-dir configs `
+  --input-path data/raw/BTCUSDT/5m/ohlcv.parquet `
+  --output-dir artifacts/baseline-local
 ```
 
 Artefactos generados:
@@ -162,29 +176,11 @@ Artefactos generados:
 - `report.json`
 - `summary.md`
 
-## Estado actual
+## Situacion actual del baseline
 
-Este scaffold ya deja resuelto:
+El baseline ya es reproducible y auditable, pero todavia debe endurecerse antes de usarlo como base para RL:
 
-- layout profesional del repositorio
-- contratos y placeholders por modulo
-- configuracion YAML tipada
-- bootstrap de la aplicacion
-- documentacion tecnica del MVP
-- tests base para wiring y contratos
-
-No incluye todavia:
-
-- logica real de ingestion de datos desde exchange
-- calculo real de indicadores y features
-- reglas operativas completas de la estrategia
-- engine realista de ejecucion o fill simulation
-- entrenamiento PPO ni pipelines RL
-
-## Roadmap de desarrollo
-
-1. Implementar la estrategia base de mean reversion con filtros de tendencia y regimen.
-2. Construir el risk engine con sizing, daily loss guardrails y restricciones prop firm.
-3. Endurecer el backtest con costes, slippage y validacion walk-forward.
-4. Implementar el entorno RL sobre la misma semantica de estados, acciones y recompensas.
-5. Incorporar PPO cuando la capa rule-based y el risk engine esten estabilizados.
+- la integracion `data -> features -> strategy -> backtest` ya corre end-to-end
+- el baseline produce trades y metricas reales
+- la capa de riesgo todavia es basica dentro del backtest
+- el objetivo inmediato es sanear y estabilizar el baseline antes del siguiente sprint de `Risk Engine`

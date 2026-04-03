@@ -17,4 +17,4 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertEqual(settings.strategy.name, "mean_reversion_trend_regime")
         self.assertFalse(settings.rl.enabled)
         self.assertTrue(settings.risk.prop_firm_mode)
-
+        self.assertEqual(settings.backtest.intrabar_exit_policy, "conservative")

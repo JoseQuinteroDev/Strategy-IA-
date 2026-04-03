@@ -85,6 +85,7 @@ def build_application(config_dir: str | Path) -> TradingApplication:
         fee_bps=settings.backtest.fee_bps,
         slippage_bps=settings.backtest.slippage_bps,
         latency_ms=settings.backtest.latency_ms,
+        intrabar_exit_policy=settings.backtest.intrabar_exit_policy,
     )
     environment = HybridTradingEnvironment(
         observation_window=settings.env.observation_window,
