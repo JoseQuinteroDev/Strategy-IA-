@@ -1,0 +1,22 @@
+data:
+  provider: binance
+  execution_timeframe: 5m
+  filter_timeframe: 1H
+  warmup_bars: 2000
+  timezone: UTC
+  historical_api_url: https://api.binance.com
+  request_timeout_seconds: 30
+  request_limit: 1000
+  default_start: 2024-01-01T00:00:00+00:00
+  default_end:
+  parquet_engine:
+  parquet_compression: snappy
+  allow_gaps: false
+  train_ratio: 0.7
+  validation_ratio: 0.15
+  test_ratio: 0.15
+  include_funding: false
+  include_open_interest: false
+  provider_params:
+    market_type: spot
+    use_testnet: false

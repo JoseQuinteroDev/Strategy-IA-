@@ -1,0 +1,6 @@
+backtest:
+  initial_capital: 100000.0
+  fee_bps: 4.0
+  slippage_bps: 2.0
+  latency_ms: 250
+

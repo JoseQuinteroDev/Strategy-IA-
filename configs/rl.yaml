@@ -1,0 +1,6 @@
+rl:
+  enabled: false
+  algorithm: PPO
+  checkpoint_dir: artifacts/rl
+  total_timesteps: 1000000
+

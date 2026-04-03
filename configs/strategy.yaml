@@ -1,0 +1,16 @@
+strategy:
+  name: mean_reversion_trend_regime
+  mode: rule_based
+  signal_cooldown_bars: 3
+  entry_zscore: 2.0
+  exit_zscore: 0.5
+  trend_filter: ema_200_1h
+  regime_filter: adx_1h
+  mean_reversion_anchor: vwap
+  adx_threshold: 25.0
+  atr_multiple_stop: 1.0
+  atr_multiple_target: 1.0
+  time_stop_bars: 12
+  session_close_hour_utc: 23
+  session_close_minute_utc: 55
+  no_entry_minutes_before_close: 30

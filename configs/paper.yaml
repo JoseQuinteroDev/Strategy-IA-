@@ -1,0 +1,6 @@
+paper:
+  enabled: false
+  dry_run: true
+  broker: simulator
+  heartbeat_seconds: 30
+

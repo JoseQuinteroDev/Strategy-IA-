@@ -1,0 +1,6 @@
+validation:
+  walk_forward_splits: 4
+  min_trades: 50
+  max_drawdown_limit: 0.08
+  sharpe_floor: 1.0
+

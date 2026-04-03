@@ -1,0 +1,18 @@
+app:
+  name: hybrid-quant-framework
+  stage: research
+  timezone: UTC
+  log_level: INFO
+
+market:
+  symbol: BTCUSDT
+  venue: binance
+  execution_timeframe: 5m
+  filter_timeframe: 1H
+  style: intraday
+
+storage:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  artifacts_dir: artifacts
+

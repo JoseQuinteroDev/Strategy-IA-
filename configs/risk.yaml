@@ -1,0 +1,7 @@
+risk:
+  max_risk_per_trade: 0.0025
+  max_daily_loss: 0.03
+  max_open_positions: 1
+  max_leverage: 2.0
+  prop_firm_mode: true
+

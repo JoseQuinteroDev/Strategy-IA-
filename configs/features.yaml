@@ -1,0 +1,19 @@
+features:
+  enabled:
+    - log_return
+    - atr_14
+    - ema_200_1h
+    - adx_1h
+    - intraday_vwap
+    - ema_50
+    - realized_volatility_20
+    - candle_range
+    - zscore_distance_to_mean
+    - hour_utc
+    - day_of_week
+    - session_asia
+    - session_europe
+    - session_us
+  lookback_window: 50
+  regime_window: 200
+  normalize: true

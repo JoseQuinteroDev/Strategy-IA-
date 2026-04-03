@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybrid-quant-framework"
+version = "0.1.0"
+description = "Scaffold for a prop-firm friendly hybrid quantitative trading framework."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pandas>=2.2",
+  "PyYAML>=6.0",
+  "requests>=2.31",
+  "pyarrow>=16.1",
+]
+
+[project.scripts]
+hybrid-quant-data = "hybrid_quant.data.cli:main"
+hq-data-download = "hybrid_quant.data.cli:download_entrypoint"
+hq-data-split = "hybrid_quant.data.cli:split_entrypoint"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "ruff>=0.5",
+  "mypy>=1.10",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
