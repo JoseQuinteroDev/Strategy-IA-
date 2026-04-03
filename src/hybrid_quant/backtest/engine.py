@@ -30,6 +30,8 @@ class _PendingEntry:
     generated_index: int
     stop_distance: float
     target_distance: float
+    size_fraction: float
+    max_leverage: float
 
 
 @dataclass(slots=True)
@@ -142,11 +144,15 @@ class IntradayBacktestEngine(BacktestEngine):
                 stop_distance = abs(signal.entry_price - signal.stop_price)
                 target_distance = abs(signal.target_price - signal.entry_price)
                 if stop_distance > 0.0 and target_distance > 0.0:
+                    size_fraction = float(signal.metadata.get("risk_size_fraction", request.risk_per_trade_fraction))
+                    max_leverage = float(signal.metadata.get("risk_max_leverage", request.max_leverage))
                     pending_entry = _PendingEntry(
                         signal=signal,
                         generated_index=index,
                         stop_distance=stop_distance,
                         target_distance=target_distance,
+                        size_fraction=size_fraction,
+                        max_leverage=max_leverage,
                     )
 
             equity_points.append((timestamp, self._equity_value(cash, position, bar.close)))
@@ -241,9 +247,9 @@ class IntradayBacktestEngine(BacktestEngine):
         fee_rate: float,
     ) -> tuple[_OpenPosition | None, float]:
         raw_entry_price = self._apply_entry_slippage(pending.signal.side, entry_bar.open)
-        risk_budget = cash * request.risk_per_trade_fraction
+        risk_budget = cash * pending.size_fraction
         quantity_from_risk = risk_budget / pending.stop_distance if pending.stop_distance > 0.0 else 0.0
-        quantity_from_leverage = (cash * request.max_leverage) / raw_entry_price if raw_entry_price > 0.0 else 0.0
+        quantity_from_leverage = (cash * pending.max_leverage) / raw_entry_price if raw_entry_price > 0.0 else 0.0
         quantity = min(quantity_from_risk, quantity_from_leverage)
         if quantity <= 0.0 or not math.isfinite(quantity):
             return None, cash

@@ -70,6 +70,12 @@ class PortfolioState:
     daily_pnl_pct: float = 0.0
     open_positions: int = 0
     gross_exposure: float = 0.0
+    peak_equity: float = 100000.0
+    total_drawdown_pct: float = 0.0
+    trades_today: int = 0
+    daily_kill_switch_active: bool = False
+    session_allowed: bool = True
+    timestamp: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -78,6 +84,8 @@ class RiskDecision:
     size_fraction: float
     max_leverage: float
     rationale: str
+    reason_code: str | None = None
+    blocked_by: Sequence[str] = field(default_factory=tuple)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

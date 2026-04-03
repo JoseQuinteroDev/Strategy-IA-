@@ -1,7 +1,15 @@
 risk:
   max_risk_per_trade: 0.0025
   max_daily_loss: 0.03
+  max_total_drawdown: 0.1
+  daily_kill_switch: true
+  max_trades_per_day: 6
   max_open_positions: 1
   max_leverage: 2.0
+  block_outside_session: true
+  session_start_hour_utc: 0
+  session_start_minute_utc: 0
+  session_end_hour_utc: 23
+  session_end_minute_utc: 55
+  require_stop_loss: true
   prop_firm_mode: true
-

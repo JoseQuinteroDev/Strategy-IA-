@@ -89,8 +89,17 @@ class StrategyConfig:
 class RiskConfig:
     max_risk_per_trade: float = 0.0025
     max_daily_loss: float = 0.03
+    max_total_drawdown: float = 0.1
+    daily_kill_switch: bool = True
+    max_trades_per_day: int = 6
     max_open_positions: int = 1
     max_leverage: float = 2.0
+    block_outside_session: bool = True
+    session_start_hour_utc: int = 0
+    session_start_minute_utc: int = 0
+    session_end_hour_utc: int = 23
+    session_end_minute_utc: int = 55
+    require_stop_loss: bool = True
     prop_firm_mode: bool = True
 
 

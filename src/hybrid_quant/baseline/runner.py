@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -16,7 +16,10 @@ from hybrid_quant.core import (
     FeatureSnapshot,
     MarketBar,
     MarketDataBatch,
+    PortfolioState,
+    RiskDecision,
     Settings,
+    SignalSide,
     StrategyContext,
     StrategySignal,
     ValidationReport,
@@ -37,10 +40,39 @@ class BaselineArtifacts:
     features_path: Path
     signals_path: Path
     trades_path: Path
+    risk_decisions_path: Path
+    risk_log_path: Path
     report_path: Path
     summary_path: Path
     result: Any
     validation_report: ValidationReport
+
+
+@dataclass(slots=True)
+class _RiskPendingEntry:
+    signal: StrategySignal
+    generated_index: int
+    stop_distance: float
+    target_distance: float
+    size_fraction: float
+    max_leverage: float
+
+
+@dataclass(slots=True)
+class _RiskOpenPosition:
+    symbol: str
+    side: SignalSide
+    entry_timestamp: pd.Timestamp
+    entry_index: int
+    entry_price: float
+    stop_price: float
+    target_price: float
+    quantity: float
+    entry_fee: float
+    time_stop_bars: int | None
+    close_on_session_end: bool
+    entry_reason: str | None
+    signal_metadata: dict[str, object]
 
 
 @dataclass(slots=True)
@@ -91,13 +123,18 @@ class BaselineRunner:
             metadata={"source": "baseline_runner"},
         )
         feature_snapshots = self.application.feature_pipeline.transform(batch)
-        signals = self._generate_signals(bars, feature_snapshots)
+        raw_signals = self._generate_signals(bars, feature_snapshots)
+        filtered_signals, risk_rows, risk_log_lines, risk_summary = self._apply_risk_engine(
+            bars=bars,
+            feature_snapshots=feature_snapshots,
+            raw_signals=raw_signals,
+        )
 
         result = self.application.backtest_engine.run(
             BacktestRequest(
                 bars=bars,
                 features=feature_snapshots,
-                signals=signals,
+                signals=filtered_signals,
                 initial_capital=self.application.settings.backtest.initial_capital,
                 risk_per_trade_fraction=self.application.settings.risk.max_risk_per_trade,
                 max_leverage=self.application.settings.risk.max_leverage,
@@ -113,13 +150,16 @@ class BaselineRunner:
         ohlcv_frame = frame.copy()
         ohlcv_frame.index.name = "open_time"
         feature_frame = self._feature_snapshots_to_frame(feature_snapshots)
-        signal_frame = self._signals_to_frame(signals)
+        signal_frame = self._signals_to_frame(filtered_signals)
         trade_frame = self._trades_to_frame(result.trade_records)
+        risk_frame = self._risk_rows_to_frame(risk_rows)
 
         ohlcv_path = output_path / "ohlcv.csv"
         features_path = output_path / "features.csv"
         signals_path = output_path / "signals.csv"
         trades_path = output_path / "trades.csv"
+        risk_decisions_path = output_path / "risk_decisions.csv"
+        risk_log_path = output_path / "risk.log"
         report_path = output_path / "report.json"
         summary_path = output_path / "summary.md"
 
@@ -127,6 +167,8 @@ class BaselineRunner:
         feature_frame.to_csv(features_path)
         signal_frame.to_csv(signals_path, index=False)
         trade_frame.to_csv(trades_path, index=False)
+        risk_frame.to_csv(risk_decisions_path, index=False)
+        risk_log_path.write_text(self._render_risk_log(risk_log_lines), encoding="utf-8")
 
         report_payload = self._build_report_payload(
             result=result,
@@ -134,6 +176,7 @@ class BaselineRunner:
             settings=self.application.settings,
             ohlcv_rows=len(ohlcv_frame),
             feature_rows=len(feature_frame),
+            risk_summary=risk_summary,
         )
         report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
         summary_path.write_text(self._build_summary_markdown(report_payload), encoding="utf-8")
@@ -144,11 +187,160 @@ class BaselineRunner:
             features_path=features_path,
             signals_path=signals_path,
             trades_path=trades_path,
+            risk_decisions_path=risk_decisions_path,
+            risk_log_path=risk_log_path,
             report_path=report_path,
             summary_path=summary_path,
             result=result,
             validation_report=validation_report,
         )
+
+    def _apply_risk_engine(
+        self,
+        *,
+        bars: Sequence[MarketBar],
+        feature_snapshots: Sequence[FeatureSnapshot],
+        raw_signals: Sequence[StrategySignal],
+    ) -> tuple[list[StrategySignal], list[dict[str, Any]], list[str], dict[str, Any]]:
+        if len(bars) != len(feature_snapshots) or len(bars) != len(raw_signals):
+            raise ValueError("Bars, features, and raw signals must have the same length for risk evaluation.")
+
+        engine = self.application.backtest_engine
+        settings = self.application.settings
+        fee_rate = engine.fee_bps / 10000.0
+        intrabar_policy = engine._resolve_intrabar_policy(settings.backtest.intrabar_exit_policy)
+
+        cash = settings.backtest.initial_capital
+        peak_equity = cash
+        day_start_equity = cash
+        current_day: date | None = None
+        trades_today = 0
+        daily_kill_switch_active = False
+        pending_entry: _RiskPendingEntry | None = None
+        position: _RiskOpenPosition | None = None
+
+        filtered_signals: list[StrategySignal] = []
+        risk_rows: list[dict[str, Any]] = []
+        risk_log_lines: list[str] = []
+        blocked_by_reason: dict[str, int] = {}
+        kill_switch_days: set[str] = set()
+
+        raw_actionable_signals = 0
+        approved_actionable_signals = 0
+        blocked_actionable_signals = 0
+
+        for index, (bar, feature, raw_signal) in enumerate(zip(bars, feature_snapshots, raw_signals, strict=True)):
+            timestamp = self._normalize_timestamp(bar.timestamp)
+            if current_day != timestamp.date():
+                current_day = timestamp.date()
+                day_start_equity = self._shadow_equity(cash, position, bar.open)
+                trades_today = 0
+                daily_kill_switch_active = False
+
+            if pending_entry is not None and index > pending_entry.generated_index and position is None:
+                position, cash = self._open_shadow_position(
+                    pending=pending_entry,
+                    entry_bar=bar,
+                    index=index,
+                    cash=cash,
+                    fee_rate=fee_rate,
+                )
+                pending_entry = None
+
+            if position is not None:
+                _, cash, position = self._evaluate_shadow_position(
+                    position=position,
+                    bar=bar,
+                    feature=feature,
+                    index=index,
+                    cash=cash,
+                    fee_rate=fee_rate,
+                    exit_zscore_threshold=settings.strategy.exit_zscore,
+                    session_close_hour_utc=settings.strategy.session_close_hour_utc,
+                    session_close_minute_utc=settings.strategy.session_close_minute_utc,
+                    intrabar_policy=intrabar_policy,
+                )
+                if position is None:
+                    trades_today += 1
+
+            current_equity = self._shadow_equity(cash, position, bar.close)
+            peak_equity = max(peak_equity, current_equity)
+            total_drawdown_pct = ((peak_equity - current_equity) / peak_equity) if peak_equity > 0.0 else 0.0
+            daily_pnl_pct = ((current_equity - day_start_equity) / day_start_equity) if day_start_equity > 0.0 else 0.0
+            if settings.risk.daily_kill_switch and daily_pnl_pct <= -settings.risk.max_daily_loss:
+                daily_kill_switch_active = True
+                kill_switch_days.add(timestamp.date().isoformat())
+
+            open_positions = int(position is not None) + int(pending_entry is not None)
+            session_allowed = self._is_inside_risk_session(timestamp)
+            gross_exposure = (position.quantity * bar.close) if position is not None else 0.0
+            portfolio = PortfolioState(
+                equity=current_equity,
+                cash=cash,
+                daily_pnl_pct=daily_pnl_pct,
+                open_positions=open_positions,
+                gross_exposure=gross_exposure,
+                peak_equity=peak_equity,
+                total_drawdown_pct=total_drawdown_pct,
+                trades_today=trades_today,
+                daily_kill_switch_active=daily_kill_switch_active,
+                session_allowed=session_allowed,
+                timestamp=timestamp.to_pydatetime(),
+            )
+
+            decision = self.application.risk_engine.evaluate(raw_signal, portfolio)
+            actionable = raw_signal.side in {SignalSide.LONG, SignalSide.SHORT}
+            if actionable:
+                raw_actionable_signals += 1
+                if decision.approved:
+                    approved_actionable_signals += 1
+                else:
+                    blocked_actionable_signals += 1
+                    if decision.reason_code:
+                        blocked_by_reason[decision.reason_code] = blocked_by_reason.get(decision.reason_code, 0) + 1
+                    risk_log_lines.append(self._format_risk_log_line(raw_signal, decision))
+
+            filtered_signal = self._filter_signal(raw_signal, decision)
+            execution_ready = (
+                decision.approved
+                and actionable
+                and self._signal_has_executable_levels(filtered_signal)
+                and index < len(bars) - 1
+                and pending_entry is None
+                and position is None
+            )
+            if execution_ready:
+                pending_entry = self._build_pending_entry(
+                    signal=filtered_signal,
+                    generated_index=index,
+                    size_fraction=decision.size_fraction,
+                    max_leverage=decision.max_leverage,
+                )
+
+            filtered_signals.append(filtered_signal)
+            risk_rows.append(
+                self._build_risk_row(
+                    raw_signal=raw_signal,
+                    filtered_signal=filtered_signal,
+                    decision=decision,
+                    portfolio=portfolio,
+                    execution_ready=execution_ready,
+                )
+            )
+
+        risk_summary = {
+            "raw_actionable_signals": raw_actionable_signals,
+            "approved_actionable_signals": approved_actionable_signals,
+            "blocked_actionable_signals": blocked_actionable_signals,
+            "blocked_by_reason": dict(sorted(blocked_by_reason.items())),
+            "daily_kill_switch_enabled": settings.risk.daily_kill_switch,
+            "kill_switch_triggered_days": sorted(kill_switch_days),
+            "max_trades_per_day": settings.risk.max_trades_per_day,
+            "max_open_positions": settings.risk.max_open_positions,
+            "block_outside_session": settings.risk.block_outside_session,
+            "require_stop_loss": settings.risk.require_stop_loss,
+        }
+        return filtered_signals, risk_rows, risk_log_lines, risk_summary
 
     def _frame_to_bars(self, frame: pd.DataFrame) -> list[MarketBar]:
         normalized = frame.copy()
@@ -188,7 +380,13 @@ class BaselineRunner:
         signals: list[StrategySignal] = []
         for bar, feature in zip(bars, feature_snapshots, strict=True):
             adx = feature.values.get("adx_1h")
-            regime = "trend" if adx is not None and math.isfinite(float(adx)) and float(adx) > self.application.settings.strategy.adx_threshold else "range"
+            regime = (
+                "trend"
+                if adx is not None
+                and math.isfinite(float(adx))
+                and float(adx) > self.application.settings.strategy.adx_threshold
+                else "range"
+            )
             signals.append(
                 self.application.strategy.generate(
                     StrategyContext(
@@ -202,6 +400,292 @@ class BaselineRunner:
                 )
             )
         return signals
+
+    def _build_pending_entry(
+        self,
+        *,
+        signal: StrategySignal,
+        generated_index: int,
+        size_fraction: float,
+        max_leverage: float,
+    ) -> _RiskPendingEntry:
+        return _RiskPendingEntry(
+            signal=signal,
+            generated_index=generated_index,
+            stop_distance=abs(float(signal.entry_price) - float(signal.stop_price)),
+            target_distance=abs(float(signal.target_price) - float(signal.entry_price)),
+            size_fraction=size_fraction,
+            max_leverage=max_leverage,
+        )
+
+    def _open_shadow_position(
+        self,
+        *,
+        pending: _RiskPendingEntry,
+        entry_bar: MarketBar,
+        index: int,
+        cash: float,
+        fee_rate: float,
+    ) -> tuple[_RiskOpenPosition | None, float]:
+        engine = self.application.backtest_engine
+        raw_entry_price = engine._apply_entry_slippage(pending.signal.side, entry_bar.open)
+        risk_budget = cash * pending.size_fraction
+        quantity_from_risk = risk_budget / pending.stop_distance if pending.stop_distance > 0.0 else 0.0
+        quantity_from_leverage = (cash * pending.max_leverage) / raw_entry_price if raw_entry_price > 0.0 else 0.0
+        quantity = min(quantity_from_risk, quantity_from_leverage)
+        if quantity <= 0.0 or not math.isfinite(quantity):
+            return None, cash
+
+        entry_fee = raw_entry_price * quantity * fee_rate
+        cash_after_entry_fee = cash - entry_fee
+        if pending.signal.side == SignalSide.LONG:
+            stop_price = raw_entry_price - pending.stop_distance
+            target_price = raw_entry_price + pending.target_distance
+        else:
+            stop_price = raw_entry_price + pending.stop_distance
+            target_price = raw_entry_price - pending.target_distance
+
+        position = _RiskOpenPosition(
+            symbol=pending.signal.symbol,
+            side=pending.signal.side,
+            entry_timestamp=pd.Timestamp(entry_bar.timestamp),
+            entry_index=index,
+            entry_price=raw_entry_price,
+            stop_price=stop_price,
+            target_price=target_price,
+            quantity=quantity,
+            entry_fee=entry_fee,
+            time_stop_bars=pending.signal.time_stop_bars,
+            close_on_session_end=pending.signal.close_on_session_end,
+            entry_reason=pending.signal.entry_reason,
+            signal_metadata=dict(pending.signal.metadata),
+        )
+        return position, cash_after_entry_fee
+
+    def _evaluate_shadow_position(
+        self,
+        *,
+        position: _RiskOpenPosition,
+        bar: MarketBar,
+        feature: FeatureSnapshot,
+        index: int,
+        cash: float,
+        fee_rate: float,
+        exit_zscore_threshold: float | None,
+        session_close_hour_utc: int,
+        session_close_minute_utc: int,
+        intrabar_policy: str,
+    ) -> tuple[dict[str, Any] | None, float, _RiskOpenPosition | None]:
+        engine = self.application.backtest_engine
+        stop_hit, target_hit = engine._intrabar_exit_flags(position, bar)
+        exit_decision = engine._resolve_intrabar_exit(
+            position=position,
+            stop_hit=stop_hit,
+            target_hit=target_hit,
+            intrabar_policy=intrabar_policy,
+        )
+        if exit_decision is not None:
+            exit_reason, exit_price = exit_decision
+            trade, updated_cash = self._close_shadow_position(
+                position=position,
+                exit_bar=bar,
+                exit_price=exit_price,
+                exit_reason=exit_reason,
+                cash=cash,
+                fee_rate=fee_rate,
+                index=index,
+            )
+            return trade, updated_cash, None
+
+        if position.close_on_session_end and engine._is_session_close(
+            bar.timestamp,
+            session_close_hour_utc,
+            session_close_minute_utc,
+        ):
+            trade, updated_cash = self._close_shadow_position(
+                position=position,
+                exit_bar=bar,
+                exit_price=bar.close,
+                exit_reason="session_close",
+                cash=cash,
+                fee_rate=fee_rate,
+                index=index,
+            )
+            return trade, updated_cash, None
+
+        bars_held = (index - position.entry_index) + 1
+        if position.time_stop_bars is not None and bars_held >= position.time_stop_bars:
+            trade, updated_cash = self._close_shadow_position(
+                position=position,
+                exit_bar=bar,
+                exit_price=bar.close,
+                exit_reason="time_stop",
+                cash=cash,
+                fee_rate=fee_rate,
+                index=index,
+            )
+            return trade, updated_cash, None
+
+        if exit_zscore_threshold is not None:
+            zscore = feature.values.get("zscore_distance_to_mean")
+            if zscore is not None and math.isfinite(float(zscore)) and abs(float(zscore)) <= exit_zscore_threshold:
+                trade, updated_cash = self._close_shadow_position(
+                    position=position,
+                    exit_bar=bar,
+                    exit_price=bar.close,
+                    exit_reason="mean_reversion_exit",
+                    cash=cash,
+                    fee_rate=fee_rate,
+                    index=index,
+                )
+                return trade, updated_cash, None
+
+        return None, cash, position
+
+    def _close_shadow_position(
+        self,
+        *,
+        position: _RiskOpenPosition,
+        exit_bar: MarketBar,
+        exit_price: float,
+        exit_reason: str,
+        cash: float,
+        fee_rate: float,
+        index: int,
+    ) -> tuple[dict[str, Any], float]:
+        engine = self.application.backtest_engine
+        slipped_exit_price = engine._apply_exit_slippage(position.side, exit_price)
+        direction = 1.0 if position.side == SignalSide.LONG else -1.0
+        gross_pnl = direction * (slipped_exit_price - position.entry_price) * position.quantity
+        exit_fee = slipped_exit_price * position.quantity * fee_rate
+        cash_after_exit = cash + gross_pnl - exit_fee
+        total_fees = position.entry_fee + exit_fee
+        net_pnl = gross_pnl - total_fees
+
+        return (
+            {
+                "entry_timestamp": position.entry_timestamp.isoformat(),
+                "exit_timestamp": pd.Timestamp(exit_bar.timestamp).isoformat(),
+                "gross_pnl": gross_pnl,
+                "net_pnl": net_pnl,
+                "exit_reason": exit_reason,
+                "bars_held": (index - position.entry_index) + 1,
+            },
+            cash_after_exit,
+        )
+
+    def _shadow_equity(self, cash: float, position: _RiskOpenPosition | None, close_price: float) -> float:
+        return self.application.backtest_engine._equity_value(cash, position, close_price)
+
+    def _is_inside_risk_session(self, timestamp: object) -> bool:
+        settings = self.application.settings.risk
+        normalized = self._normalize_timestamp(timestamp)
+        current_time = normalized.time()
+        session_start = time(settings.session_start_hour_utc, settings.session_start_minute_utc)
+        session_end = time(settings.session_end_hour_utc, settings.session_end_minute_utc)
+        if session_start <= session_end:
+            return session_start <= current_time <= session_end
+        return current_time >= session_start or current_time <= session_end
+
+    def _normalize_timestamp(self, timestamp: object) -> pd.Timestamp:
+        normalized = pd.Timestamp(timestamp)
+        if normalized.tzinfo is None:
+            return normalized.tz_localize("UTC")
+        return normalized.tz_convert("UTC")
+
+    def _signal_has_executable_levels(self, signal: StrategySignal) -> bool:
+        if signal.side not in {SignalSide.LONG, SignalSide.SHORT}:
+            return False
+        if signal.entry_price is None or signal.stop_price is None or signal.target_price is None:
+            return False
+        stop_distance = abs(float(signal.entry_price) - float(signal.stop_price))
+        target_distance = abs(float(signal.target_price) - float(signal.entry_price))
+        return stop_distance > 0.0 and target_distance > 0.0
+
+    def _filter_signal(self, signal: StrategySignal, decision: RiskDecision) -> StrategySignal:
+        metadata = dict(signal.metadata)
+        metadata.update(decision.metadata)
+        metadata.update(
+            {
+                "raw_side": signal.side.value,
+                "raw_rationale": signal.rationale,
+                "raw_entry_reason": signal.entry_reason,
+                "risk_approved": decision.approved,
+                "risk_reason_code": decision.reason_code,
+                "risk_blocked_by": list(decision.blocked_by),
+                "risk_rationale": decision.rationale,
+                "risk_size_fraction": decision.size_fraction,
+                "risk_max_leverage": decision.max_leverage,
+            }
+        )
+
+        if decision.approved and signal.side in {SignalSide.LONG, SignalSide.SHORT}:
+            return StrategySignal(
+                symbol=signal.symbol,
+                timestamp=signal.timestamp,
+                side=signal.side,
+                strength=signal.strength,
+                rationale=signal.rationale,
+                entry_price=signal.entry_price,
+                stop_price=signal.stop_price,
+                target_price=signal.target_price,
+                time_stop_bars=signal.time_stop_bars,
+                close_on_session_end=signal.close_on_session_end,
+                entry_reason=signal.entry_reason,
+                metadata=metadata,
+            )
+
+        rationale = signal.rationale if signal.side == SignalSide.FLAT else decision.rationale
+        return StrategySignal(
+            symbol=signal.symbol,
+            timestamp=signal.timestamp,
+            side=SignalSide.FLAT,
+            strength=0.0,
+            rationale=rationale,
+            entry_price=None,
+            stop_price=None,
+            target_price=None,
+            time_stop_bars=signal.time_stop_bars,
+            close_on_session_end=signal.close_on_session_end,
+            entry_reason=None,
+            metadata=metadata,
+        )
+
+    def _build_risk_row(
+        self,
+        *,
+        raw_signal: StrategySignal,
+        filtered_signal: StrategySignal,
+        decision: RiskDecision,
+        portfolio: PortfolioState,
+        execution_ready: bool,
+    ) -> dict[str, Any]:
+        return {
+            "timestamp": raw_signal.timestamp,
+            "symbol": raw_signal.symbol,
+            "raw_side": raw_signal.side.value,
+            "filtered_side": filtered_signal.side.value,
+            "actionable": raw_signal.side in {SignalSide.LONG, SignalSide.SHORT},
+            "approved": decision.approved,
+            "execution_ready": execution_ready,
+            "reason_code": decision.reason_code,
+            "blocked_by": json.dumps(list(decision.blocked_by)),
+            "rationale": decision.rationale,
+            "entry_price": raw_signal.entry_price,
+            "stop_price": raw_signal.stop_price,
+            "target_price": raw_signal.target_price,
+            "size_fraction": decision.size_fraction,
+            "max_leverage": decision.max_leverage,
+            "equity": portfolio.equity,
+            "cash": portfolio.cash,
+            "daily_pnl_pct": portfolio.daily_pnl_pct,
+            "total_drawdown_pct": portfolio.total_drawdown_pct,
+            "trades_today": portfolio.trades_today,
+            "open_positions": portfolio.open_positions,
+            "gross_exposure": portfolio.gross_exposure,
+            "session_allowed": portfolio.session_allowed,
+            "daily_kill_switch_active": portfolio.daily_kill_switch_active,
+        }
 
     def _feature_snapshots_to_frame(self, feature_snapshots: Sequence[FeatureSnapshot]) -> pd.DataFrame:
         rows = []
@@ -223,6 +707,7 @@ class BaselineRunner:
                     "timestamp": signal.timestamp,
                     "symbol": signal.symbol,
                     "side": signal.side.value,
+                    "raw_side": signal.metadata.get("raw_side", signal.side.value),
                     "strength": signal.strength,
                     "entry_price": signal.entry_price,
                     "stop_price": signal.stop_price,
@@ -231,6 +716,11 @@ class BaselineRunner:
                     "close_on_session_end": signal.close_on_session_end,
                     "entry_reason": signal.entry_reason,
                     "rationale": signal.rationale,
+                    "risk_approved": signal.metadata.get("risk_approved"),
+                    "risk_reason_code": signal.metadata.get("risk_reason_code"),
+                    "risk_blocked_by": json.dumps(signal.metadata.get("risk_blocked_by", [])),
+                    "risk_size_fraction": signal.metadata.get("risk_size_fraction"),
+                    "risk_max_leverage": signal.metadata.get("risk_max_leverage"),
                 }
             )
         return pd.DataFrame(rows)
@@ -274,6 +764,35 @@ class BaselineRunner:
             )
         return pd.DataFrame(rows, columns=columns)
 
+    def _risk_rows_to_frame(self, rows: Sequence[dict[str, Any]]) -> pd.DataFrame:
+        columns = [
+            "timestamp",
+            "symbol",
+            "raw_side",
+            "filtered_side",
+            "actionable",
+            "approved",
+            "execution_ready",
+            "reason_code",
+            "blocked_by",
+            "rationale",
+            "entry_price",
+            "stop_price",
+            "target_price",
+            "size_fraction",
+            "max_leverage",
+            "equity",
+            "cash",
+            "daily_pnl_pct",
+            "total_drawdown_pct",
+            "trades_today",
+            "open_positions",
+            "gross_exposure",
+            "session_allowed",
+            "daily_kill_switch_active",
+        ]
+        return pd.DataFrame(rows, columns=columns)
+
     def _build_report_payload(
         self,
         *,
@@ -282,6 +801,7 @@ class BaselineRunner:
         settings: Settings,
         ohlcv_rows: int,
         feature_rows: int,
+        risk_summary: dict[str, Any],
     ) -> dict[str, Any]:
         payload = {
             "symbol": settings.market.symbol,
@@ -307,6 +827,7 @@ class BaselineRunner:
                 "checks": validation_report.checks,
                 "summary": validation_report.summary,
             },
+            "risk": risk_summary,
             "backtest": {
                 key: self._sanitize_value(value)
                 for key, value in result.metadata.items()
@@ -333,13 +854,32 @@ class BaselineRunner:
                 f"- Sortino: `{payload['sortino']}`",
                 f"- Calmar: `{payload['calmar']}`",
                 f"- PnL neto: `{payload['pnl_net']}`",
+                (
+                    f"- Risk blocked signals: `{payload['risk']['blocked_actionable_signals']}` / "
+                    f"`{payload['risk']['raw_actionable_signals']}` actionable"
+                ),
                 f"- Validation: `{payload['validation']['summary']}`",
             ]
+        )
+
+    def _render_risk_log(self, lines: Sequence[str]) -> str:
+        if not lines:
+            return "# No actionable signals were blocked by the risk engine.\n"
+        return "\n".join(lines) + "\n"
+
+    def _format_risk_log_line(self, signal: StrategySignal, decision: RiskDecision) -> str:
+        blocked_by = ",".join(decision.blocked_by) if decision.blocked_by else "unknown"
+        return (
+            f"{pd.Timestamp(signal.timestamp).isoformat()} | raw_side={signal.side.value} "
+            f"| reason={decision.reason_code or 'unknown'} | blocked_by={blocked_by} "
+            f"| rationale={decision.rationale}"
         )
 
     def _sanitize_value(self, value: Any) -> Any:
         if isinstance(value, dict):
             return {key: self._sanitize_value(inner) for key, inner in value.items()}
+        if isinstance(value, tuple):
+            return [self._sanitize_value(item) for item in value]
         if isinstance(value, list):
             return [self._sanitize_value(item) for item in value]
         if isinstance(value, float):
@@ -390,7 +930,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     report = json.loads(artifacts.report_path.read_text(encoding="utf-8"))
     print(f"Baseline report written to {artifacts.report_path}")
     print(f"Summary written to {artifacts.summary_path}")
-    print(f"Trades={report['number_of_trades']} WinRate={report['win_rate']} PnL={report['pnl_net']}")
+    print(
+        " ".join(
+            [
+                f"Trades={report['number_of_trades']}",
+                f"WinRate={report['win_rate']}",
+                f"PnL={report['pnl_net']}",
+                f"BlockedSignals={report['risk']['blocked_actionable_signals']}",
+            ]
+        )
+    )
     return 0
 
 

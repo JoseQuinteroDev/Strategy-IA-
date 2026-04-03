@@ -253,6 +253,8 @@ class BaselineRunnerTests(unittest.TestCase):
             self.assertTrue(artifacts.features_path.exists())
             self.assertTrue(artifacts.signals_path.exists())
             self.assertTrue(artifacts.trades_path.exists())
+            self.assertTrue(artifacts.risk_decisions_path.exists())
+            self.assertTrue(artifacts.risk_log_path.exists())
             self.assertTrue(artifacts.report_path.exists())
             self.assertTrue(artifacts.summary_path.exists())
 
@@ -273,6 +275,7 @@ class BaselineRunnerTests(unittest.TestCase):
                 "total_return",
                 "equity_final",
                 "validation",
+                "risk",
                 "backtest",
             }
             self.assertTrue(required_keys.issubset(report.keys()))
@@ -291,6 +294,8 @@ class BaselineRunnerTests(unittest.TestCase):
                 places=6,
             )
             self.assertIn("intrabar_exit_policy", report["backtest"])
+            self.assertIn("blocked_actionable_signals", report["risk"])
+            self.assertIn("blocked_by_reason", report["risk"])
 
             trades_frame = pd.read_csv(artifacts.trades_path)
             expected_trade_columns = [
@@ -311,3 +316,16 @@ class BaselineRunnerTests(unittest.TestCase):
             ]
             self.assertEqual(list(trades_frame.columns), expected_trade_columns)
             self.assertEqual(len(trades_frame), report["number_of_trades"])
+            if not trades_frame.empty:
+                pd.to_datetime(trades_frame["entry_timestamp"], utc=True)
+                pd.to_datetime(trades_frame["exit_timestamp"], utc=True)
+                for column in ["entry_price", "exit_price", "quantity", "gross_pnl", "net_pnl", "fees_paid"]:
+                    self.assertTrue(pd.to_numeric(trades_frame[column], errors="coerce").notna().all())
+
+            risk_frame = pd.read_csv(artifacts.risk_decisions_path)
+            self.assertIn("reason_code", risk_frame.columns)
+            self.assertIn("approved", risk_frame.columns)
+            self.assertEqual(len(risk_frame), len(frame))
+
+            risk_log = artifacts.risk_log_path.read_text(encoding="utf-8")
+            self.assertTrue(risk_log.strip())

@@ -76,8 +76,17 @@ def build_application(config_dir: str | Path) -> TradingApplication:
     risk_engine = PropFirmRiskEngine(
         max_risk_per_trade=settings.risk.max_risk_per_trade,
         max_daily_loss=settings.risk.max_daily_loss,
+        max_total_drawdown=settings.risk.max_total_drawdown,
+        daily_kill_switch=settings.risk.daily_kill_switch,
+        max_trades_per_day=settings.risk.max_trades_per_day,
         max_open_positions=settings.risk.max_open_positions,
         max_leverage=settings.risk.max_leverage,
+        block_outside_session=settings.risk.block_outside_session,
+        session_start_hour_utc=settings.risk.session_start_hour_utc,
+        session_start_minute_utc=settings.risk.session_start_minute_utc,
+        session_end_hour_utc=settings.risk.session_end_hour_utc,
+        session_end_minute_utc=settings.risk.session_end_minute_utc,
+        require_stop_loss=settings.risk.require_stop_loss,
         prop_firm_mode=settings.risk.prop_firm_mode,
     )
     backtest_engine = IntradayBacktestEngine(
