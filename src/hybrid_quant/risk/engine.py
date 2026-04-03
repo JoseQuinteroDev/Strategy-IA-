@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
+from datetime import datetime
 
 from hybrid_quant.core import PortfolioState, RiskDecision, SignalSide, StrategySignal
+from hybrid_quant.execution import is_within_session
 
 
 class RiskEngine(ABC):
@@ -108,13 +109,13 @@ class PropFirmRiskEngine(RiskEngine):
         return False
 
     def _is_inside_session(self, timestamp: datetime) -> bool:
-        normalized = timestamp.astimezone(UTC) if timestamp.tzinfo else timestamp.replace(tzinfo=UTC)
-        current_time = normalized.timetz().replace(tzinfo=None)
-        session_start = time(self.session_start_hour_utc, self.session_start_minute_utc)
-        session_end = time(self.session_end_hour_utc, self.session_end_minute_utc)
-        if session_start <= session_end:
-            return session_start <= current_time <= session_end
-        return current_time >= session_start or current_time <= session_end
+        return is_within_session(
+            timestamp,
+            start_hour_utc=self.session_start_hour_utc,
+            start_minute_utc=self.session_start_minute_utc,
+            end_hour_utc=self.session_end_hour_utc,
+            end_minute_utc=self.session_end_minute_utc,
+        )
 
     def _build_block_rationale(self, reasons: list[str]) -> str:
         labels = {

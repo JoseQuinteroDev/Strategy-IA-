@@ -4,7 +4,7 @@ import argparse
 import json
 import math
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -31,6 +31,7 @@ from hybrid_quant.data import (
     HistoricalDataIngestionService,
     ParquetDatasetStore,
 )
+from hybrid_quant.execution import PortfolioSimulator, is_within_session, signal_has_executable_levels
 
 
 @dataclass(slots=True)
@@ -46,33 +47,6 @@ class BaselineArtifacts:
     summary_path: Path
     result: Any
     validation_report: ValidationReport
-
-
-@dataclass(slots=True)
-class _RiskPendingEntry:
-    signal: StrategySignal
-    generated_index: int
-    stop_distance: float
-    target_distance: float
-    size_fraction: float
-    max_leverage: float
-
-
-@dataclass(slots=True)
-class _RiskOpenPosition:
-    symbol: str
-    side: SignalSide
-    entry_timestamp: pd.Timestamp
-    entry_index: int
-    entry_price: float
-    stop_price: float
-    target_price: float
-    quantity: float
-    entry_fee: float
-    time_stop_bars: int | None
-    close_on_session_end: bool
-    entry_reason: str | None
-    signal_metadata: dict[str, object]
 
 
 @dataclass(slots=True)
@@ -205,26 +179,25 @@ class BaselineRunner:
         if len(bars) != len(feature_snapshots) or len(bars) != len(raw_signals):
             raise ValueError("Bars, features, and raw signals must have the same length for risk evaluation.")
 
-        engine = self.application.backtest_engine
         settings = self.application.settings
-        fee_rate = engine.fee_bps / 10000.0
-        intrabar_policy = engine._resolve_intrabar_policy(settings.backtest.intrabar_exit_policy)
+        simulator = PortfolioSimulator(
+            initial_capital=settings.backtest.initial_capital,
+            fee_bps=settings.backtest.fee_bps,
+            slippage_bps=settings.backtest.slippage_bps,
+            intrabar_exit_policy=settings.backtest.intrabar_exit_policy,
+        )
 
-        cash = settings.backtest.initial_capital
-        peak_equity = cash
-        day_start_equity = cash
+        day_start_equity = settings.backtest.initial_capital
         current_day: date | None = None
         trades_today = 0
         daily_kill_switch_active = False
-        pending_entry: _RiskPendingEntry | None = None
-        position: _RiskOpenPosition | None = None
+        peak_equity = settings.backtest.initial_capital
 
         filtered_signals: list[StrategySignal] = []
         risk_rows: list[dict[str, Any]] = []
         risk_log_lines: list[str] = []
         blocked_by_reason: dict[str, int] = {}
         kill_switch_days: set[str] = set()
-
         raw_actionable_signals = 0
         approved_actionable_signals = 0
         blocked_actionable_signals = 0
@@ -233,37 +206,22 @@ class BaselineRunner:
             timestamp = self._normalize_timestamp(bar.timestamp)
             if current_day != timestamp.date():
                 current_day = timestamp.date()
-                day_start_equity = self._shadow_equity(cash, position, bar.open)
+                day_start_equity = simulator.equity(bar.open)
                 trades_today = 0
                 daily_kill_switch_active = False
 
-            if pending_entry is not None and index > pending_entry.generated_index and position is None:
-                position, cash = self._open_shadow_position(
-                    pending=pending_entry,
-                    entry_bar=bar,
-                    index=index,
-                    cash=cash,
-                    fee_rate=fee_rate,
-                )
-                pending_entry = None
+            trade = simulator.step(
+                index=index,
+                bar=bar,
+                feature=feature,
+                exit_zscore_threshold=settings.strategy.exit_zscore,
+                session_close_hour_utc=settings.strategy.session_close_hour_utc,
+                session_close_minute_utc=settings.strategy.session_close_minute_utc,
+            )
+            if trade is not None:
+                trades_today += 1
 
-            if position is not None:
-                _, cash, position = self._evaluate_shadow_position(
-                    position=position,
-                    bar=bar,
-                    feature=feature,
-                    index=index,
-                    cash=cash,
-                    fee_rate=fee_rate,
-                    exit_zscore_threshold=settings.strategy.exit_zscore,
-                    session_close_hour_utc=settings.strategy.session_close_hour_utc,
-                    session_close_minute_utc=settings.strategy.session_close_minute_utc,
-                    intrabar_policy=intrabar_policy,
-                )
-                if position is None:
-                    trades_today += 1
-
-            current_equity = self._shadow_equity(cash, position, bar.close)
+            current_equity = simulator.equity(bar.close)
             peak_equity = max(peak_equity, current_equity)
             total_drawdown_pct = ((peak_equity - current_equity) / peak_equity) if peak_equity > 0.0 else 0.0
             daily_pnl_pct = ((current_equity - day_start_equity) / day_start_equity) if day_start_equity > 0.0 else 0.0
@@ -271,12 +229,18 @@ class BaselineRunner:
                 daily_kill_switch_active = True
                 kill_switch_days.add(timestamp.date().isoformat())
 
-            open_positions = int(position is not None) + int(pending_entry is not None)
-            session_allowed = self._is_inside_risk_session(timestamp)
-            gross_exposure = (position.quantity * bar.close) if position is not None else 0.0
+            open_positions = int(simulator.position is not None) + int(simulator.pending_entry is not None)
+            session_allowed = is_within_session(
+                timestamp,
+                start_hour_utc=settings.risk.session_start_hour_utc,
+                start_minute_utc=settings.risk.session_start_minute_utc,
+                end_hour_utc=settings.risk.session_end_hour_utc,
+                end_minute_utc=settings.risk.session_end_minute_utc,
+            )
+            gross_exposure = (simulator.position.quantity * bar.close) if simulator.position is not None else 0.0
             portfolio = PortfolioState(
                 equity=current_equity,
-                cash=cash,
+                cash=simulator.cash,
                 daily_pnl_pct=daily_pnl_pct,
                 open_positions=open_positions,
                 gross_exposure=gross_exposure,
@@ -301,18 +265,18 @@ class BaselineRunner:
                     risk_log_lines.append(self._format_risk_log_line(raw_signal, decision))
 
             filtered_signal = self._filter_signal(raw_signal, decision)
-            execution_ready = (
+            execution_ready = False
+            if (
                 decision.approved
                 and actionable
-                and self._signal_has_executable_levels(filtered_signal)
                 and index < len(bars) - 1
-                and pending_entry is None
-                and position is None
-            )
-            if execution_ready:
-                pending_entry = self._build_pending_entry(
+                and simulator.position is None
+                and simulator.pending_entry is None
+                and signal_has_executable_levels(filtered_signal)
+            ):
+                execution_ready = simulator.queue_signal(
                     signal=filtered_signal,
-                    generated_index=index,
+                    index=index,
                     size_fraction=decision.size_fraction,
                     max_leverage=decision.max_leverage,
                 )
@@ -401,206 +365,11 @@ class BaselineRunner:
             )
         return signals
 
-    def _build_pending_entry(
-        self,
-        *,
-        signal: StrategySignal,
-        generated_index: int,
-        size_fraction: float,
-        max_leverage: float,
-    ) -> _RiskPendingEntry:
-        return _RiskPendingEntry(
-            signal=signal,
-            generated_index=generated_index,
-            stop_distance=abs(float(signal.entry_price) - float(signal.stop_price)),
-            target_distance=abs(float(signal.target_price) - float(signal.entry_price)),
-            size_fraction=size_fraction,
-            max_leverage=max_leverage,
-        )
-
-    def _open_shadow_position(
-        self,
-        *,
-        pending: _RiskPendingEntry,
-        entry_bar: MarketBar,
-        index: int,
-        cash: float,
-        fee_rate: float,
-    ) -> tuple[_RiskOpenPosition | None, float]:
-        engine = self.application.backtest_engine
-        raw_entry_price = engine._apply_entry_slippage(pending.signal.side, entry_bar.open)
-        risk_budget = cash * pending.size_fraction
-        quantity_from_risk = risk_budget / pending.stop_distance if pending.stop_distance > 0.0 else 0.0
-        quantity_from_leverage = (cash * pending.max_leverage) / raw_entry_price if raw_entry_price > 0.0 else 0.0
-        quantity = min(quantity_from_risk, quantity_from_leverage)
-        if quantity <= 0.0 or not math.isfinite(quantity):
-            return None, cash
-
-        entry_fee = raw_entry_price * quantity * fee_rate
-        cash_after_entry_fee = cash - entry_fee
-        if pending.signal.side == SignalSide.LONG:
-            stop_price = raw_entry_price - pending.stop_distance
-            target_price = raw_entry_price + pending.target_distance
-        else:
-            stop_price = raw_entry_price + pending.stop_distance
-            target_price = raw_entry_price - pending.target_distance
-
-        position = _RiskOpenPosition(
-            symbol=pending.signal.symbol,
-            side=pending.signal.side,
-            entry_timestamp=pd.Timestamp(entry_bar.timestamp),
-            entry_index=index,
-            entry_price=raw_entry_price,
-            stop_price=stop_price,
-            target_price=target_price,
-            quantity=quantity,
-            entry_fee=entry_fee,
-            time_stop_bars=pending.signal.time_stop_bars,
-            close_on_session_end=pending.signal.close_on_session_end,
-            entry_reason=pending.signal.entry_reason,
-            signal_metadata=dict(pending.signal.metadata),
-        )
-        return position, cash_after_entry_fee
-
-    def _evaluate_shadow_position(
-        self,
-        *,
-        position: _RiskOpenPosition,
-        bar: MarketBar,
-        feature: FeatureSnapshot,
-        index: int,
-        cash: float,
-        fee_rate: float,
-        exit_zscore_threshold: float | None,
-        session_close_hour_utc: int,
-        session_close_minute_utc: int,
-        intrabar_policy: str,
-    ) -> tuple[dict[str, Any] | None, float, _RiskOpenPosition | None]:
-        engine = self.application.backtest_engine
-        stop_hit, target_hit = engine._intrabar_exit_flags(position, bar)
-        exit_decision = engine._resolve_intrabar_exit(
-            position=position,
-            stop_hit=stop_hit,
-            target_hit=target_hit,
-            intrabar_policy=intrabar_policy,
-        )
-        if exit_decision is not None:
-            exit_reason, exit_price = exit_decision
-            trade, updated_cash = self._close_shadow_position(
-                position=position,
-                exit_bar=bar,
-                exit_price=exit_price,
-                exit_reason=exit_reason,
-                cash=cash,
-                fee_rate=fee_rate,
-                index=index,
-            )
-            return trade, updated_cash, None
-
-        if position.close_on_session_end and engine._is_session_close(
-            bar.timestamp,
-            session_close_hour_utc,
-            session_close_minute_utc,
-        ):
-            trade, updated_cash = self._close_shadow_position(
-                position=position,
-                exit_bar=bar,
-                exit_price=bar.close,
-                exit_reason="session_close",
-                cash=cash,
-                fee_rate=fee_rate,
-                index=index,
-            )
-            return trade, updated_cash, None
-
-        bars_held = (index - position.entry_index) + 1
-        if position.time_stop_bars is not None and bars_held >= position.time_stop_bars:
-            trade, updated_cash = self._close_shadow_position(
-                position=position,
-                exit_bar=bar,
-                exit_price=bar.close,
-                exit_reason="time_stop",
-                cash=cash,
-                fee_rate=fee_rate,
-                index=index,
-            )
-            return trade, updated_cash, None
-
-        if exit_zscore_threshold is not None:
-            zscore = feature.values.get("zscore_distance_to_mean")
-            if zscore is not None and math.isfinite(float(zscore)) and abs(float(zscore)) <= exit_zscore_threshold:
-                trade, updated_cash = self._close_shadow_position(
-                    position=position,
-                    exit_bar=bar,
-                    exit_price=bar.close,
-                    exit_reason="mean_reversion_exit",
-                    cash=cash,
-                    fee_rate=fee_rate,
-                    index=index,
-                )
-                return trade, updated_cash, None
-
-        return None, cash, position
-
-    def _close_shadow_position(
-        self,
-        *,
-        position: _RiskOpenPosition,
-        exit_bar: MarketBar,
-        exit_price: float,
-        exit_reason: str,
-        cash: float,
-        fee_rate: float,
-        index: int,
-    ) -> tuple[dict[str, Any], float]:
-        engine = self.application.backtest_engine
-        slipped_exit_price = engine._apply_exit_slippage(position.side, exit_price)
-        direction = 1.0 if position.side == SignalSide.LONG else -1.0
-        gross_pnl = direction * (slipped_exit_price - position.entry_price) * position.quantity
-        exit_fee = slipped_exit_price * position.quantity * fee_rate
-        cash_after_exit = cash + gross_pnl - exit_fee
-        total_fees = position.entry_fee + exit_fee
-        net_pnl = gross_pnl - total_fees
-
-        return (
-            {
-                "entry_timestamp": position.entry_timestamp.isoformat(),
-                "exit_timestamp": pd.Timestamp(exit_bar.timestamp).isoformat(),
-                "gross_pnl": gross_pnl,
-                "net_pnl": net_pnl,
-                "exit_reason": exit_reason,
-                "bars_held": (index - position.entry_index) + 1,
-            },
-            cash_after_exit,
-        )
-
-    def _shadow_equity(self, cash: float, position: _RiskOpenPosition | None, close_price: float) -> float:
-        return self.application.backtest_engine._equity_value(cash, position, close_price)
-
-    def _is_inside_risk_session(self, timestamp: object) -> bool:
-        settings = self.application.settings.risk
-        normalized = self._normalize_timestamp(timestamp)
-        current_time = normalized.time()
-        session_start = time(settings.session_start_hour_utc, settings.session_start_minute_utc)
-        session_end = time(settings.session_end_hour_utc, settings.session_end_minute_utc)
-        if session_start <= session_end:
-            return session_start <= current_time <= session_end
-        return current_time >= session_start or current_time <= session_end
-
     def _normalize_timestamp(self, timestamp: object) -> pd.Timestamp:
         normalized = pd.Timestamp(timestamp)
         if normalized.tzinfo is None:
             return normalized.tz_localize("UTC")
         return normalized.tz_convert("UTC")
-
-    def _signal_has_executable_levels(self, signal: StrategySignal) -> bool:
-        if signal.side not in {SignalSide.LONG, SignalSide.SHORT}:
-            return False
-        if signal.entry_price is None or signal.stop_price is None or signal.target_price is None:
-            return False
-        stop_distance = abs(float(signal.entry_price) - float(signal.stop_price))
-        target_distance = abs(float(signal.target_price) - float(signal.entry_price))
-        return stop_distance > 0.0 and target_distance > 0.0
 
     def _filter_signal(self, signal: StrategySignal, decision: RiskDecision) -> StrategySignal:
         metadata = dict(signal.metadata)
