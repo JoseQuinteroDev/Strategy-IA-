@@ -190,6 +190,52 @@ python -m hybrid_quant.data split `
   --input-path data/raw/BTCUSDT/5m/ohlcv.parquet
 ```
 
+Importacion de OHLCV externo a esquema interno:
+
+- formatos aceptados: `CSV` y `Parquet`
+- esquema interno esperado por el framework:
+  - `open_time`
+  - `open`
+  - `high`
+  - `low`
+  - `close`
+  - `volume`
+- aliases comunes soportados en importacion:
+  - timestamp: `open_time`, `timestamp`, `datetime`, `date_time`, `time`, `date`, `bar_time`
+  - OHLC: `Open/High/Low/Close`, `O/H/L/C`, variantes con mayusculas, espacios o `<DATE>/<TIME>`
+  - volumen: `volume`, `vol`, `tick_volume`, `contracts`
+- validaciones aplicadas:
+  - archivo existente y legible
+  - timestamps parseables
+  - orden temporal ascendente
+  - limpieza de duplicados
+  - verificacion de cadencia dominante `5m`
+  - chequeo de gaps con `--allow-gaps` cuando el mercado tenga cierres o huecos de sesion
+
+Ejemplo para convertir un export externo de `NQ/MNQ/Nasdaq 5m`:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.data import `
+  --config-dir configs `
+  --input-path data/external/NQ_5m_export.csv `
+  --output-path data/raw/NQ/5m/ohlcv-normalized.csv `
+  --interval 5m `
+  --allow-gaps
+```
+
+Tambien puedes usar el entrypoint directo:
+
+```powershell
+$env:PYTHONPATH = "src"
+hq-data-import `
+  --config-dir configs `
+  --input-path data/external/NQ_5m_export.csv `
+  --output-path data/raw/NQ/5m/ohlcv-normalized.csv `
+  --interval 5m `
+  --allow-gaps
+```
+
 ## Baseline runner con Risk Engine
 
 Este pipeline genera:
@@ -221,7 +267,7 @@ $env:PYTHONPATH = "src"
 python -m hybrid_quant.baseline `
   --config-dir configs `
   --variant baseline_trend_nasdaq `
-  --input-path data/raw/NQ/5m/ohlcv.csv `
+  --input-path data/raw/NQ/5m/ohlcv-normalized.csv `
   --output-dir artifacts/baseline-trend-nasdaq `
   --allow-gaps
 ```
@@ -235,6 +281,23 @@ python -m hybrid_quant.baseline.diagnostics `
   --artifact-dir artifacts/baseline-q1-2024 `
   --output-dir artifacts/baseline-q1-2024-diagnostics
 ```
+
+Para la nueva baseline `baseline_trend_nasdaq`, el flujo mas comodo es un solo paso desde `input-path`:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.baseline.analyze `
+  --config-dir configs `
+  --variant baseline_trend_nasdaq `
+  --input-path data/raw/NQ/5m/ohlcv-normalized.csv `
+  --output-dir artifacts/baseline-trend-nasdaq-analysis `
+  --allow-gaps
+```
+
+Esto genera primero el baseline reproducible y luego su diagnostico completo en:
+
+- `artifacts/.../baseline/`
+- `artifacts/.../diagnostics/`
 
 ## Comparacion baseline_v1 vs baseline_v2 vs baseline_v3
 

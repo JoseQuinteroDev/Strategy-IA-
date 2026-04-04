@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
+
 from hybrid_quant.data.cli import main
 
 
@@ -120,3 +122,40 @@ class DataCliTests(unittest.TestCase):
         self.assertAlmostEqual(service.split_config.validation_ratio, 0.15)
         self.assertAlmostEqual(service.split_config.test_ratio, 0.15)
 
+    def test_import_command_converts_external_csv_into_internal_schema(self) -> None:
+        config_dir = Path(__file__).resolve().parents[2] / "configs"
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            input_path = tmp_path / "external.csv"
+            output_path = tmp_path / "normalized.csv"
+            pd.DataFrame(
+                {
+                    "Timestamp": ["2024-01-01T00:00:00Z", "2024-01-01T00:05:00Z"],
+                    "Open": [100.0, 101.0],
+                    "High": [101.0, 102.0],
+                    "Low": [99.0, 100.0],
+                    "Close": [100.5, 101.5],
+                    "Volume": [10, 11],
+                }
+            ).to_csv(input_path, index=False)
+
+            with patch("builtins.print"):
+                exit_code = main(
+                    [
+                        "import",
+                        "--config-dir",
+                        str(config_dir),
+                        "--input-path",
+                        str(input_path),
+                        "--output-path",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            normalized = pd.read_csv(output_path)
+            self.assertEqual(
+                list(normalized.columns),
+                ["open_time", "open", "high", "low", "close", "volume"],
+            )

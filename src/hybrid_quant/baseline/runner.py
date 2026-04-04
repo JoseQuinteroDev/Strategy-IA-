@@ -30,6 +30,7 @@ from hybrid_quant.data import (
     DownloadRequest,
     HistoricalDataIngestionService,
     ParquetDatasetStore,
+    read_ohlcv_frame,
 )
 from hybrid_quant.execution import PortfolioSimulator, is_within_session, signal_has_executable_levels
 
@@ -476,28 +477,44 @@ class BaselineRunner:
 
     def _signals_to_frame(self, signals: Sequence[StrategySignal]) -> pd.DataFrame:
         rows = []
+        exported_metadata_keys = [
+            "strategy_family",
+            "variant_name",
+            "regime",
+            "anchor_name",
+            "anchor_value",
+            "breakout_level",
+            "breakout_trigger",
+            "breakout_distance",
+            "breakout_distance_atr",
+            "breakout_range_width_atr",
+            "momentum",
+            "target_to_cost_ratio",
+            "expected_move_bps",
+        ]
         for signal in signals:
-            rows.append(
-                {
-                    "timestamp": signal.timestamp,
-                    "symbol": signal.symbol,
-                    "side": signal.side.value,
-                    "raw_side": signal.metadata.get("raw_side", signal.side.value),
-                    "strength": signal.strength,
-                    "entry_price": signal.entry_price,
-                    "stop_price": signal.stop_price,
-                    "target_price": signal.target_price,
-                    "time_stop_bars": signal.time_stop_bars,
-                    "close_on_session_end": signal.close_on_session_end,
-                    "entry_reason": signal.entry_reason,
-                    "rationale": signal.rationale,
-                    "risk_approved": signal.metadata.get("risk_approved"),
-                    "risk_reason_code": signal.metadata.get("risk_reason_code"),
-                    "risk_blocked_by": json.dumps(signal.metadata.get("risk_blocked_by", [])),
-                    "risk_size_fraction": signal.metadata.get("risk_size_fraction"),
-                    "risk_max_leverage": signal.metadata.get("risk_max_leverage"),
-                }
-            )
+            row = {
+                "timestamp": signal.timestamp,
+                "symbol": signal.symbol,
+                "side": signal.side.value,
+                "raw_side": signal.metadata.get("raw_side", signal.side.value),
+                "strength": signal.strength,
+                "entry_price": signal.entry_price,
+                "stop_price": signal.stop_price,
+                "target_price": signal.target_price,
+                "time_stop_bars": signal.time_stop_bars,
+                "close_on_session_end": signal.close_on_session_end,
+                "entry_reason": signal.entry_reason,
+                "rationale": signal.rationale,
+                "risk_approved": signal.metadata.get("risk_approved"),
+                "risk_reason_code": signal.metadata.get("risk_reason_code"),
+                "risk_blocked_by": json.dumps(signal.metadata.get("risk_blocked_by", [])),
+                "risk_size_fraction": signal.metadata.get("risk_size_fraction"),
+                "risk_max_leverage": signal.metadata.get("risk_max_leverage"),
+            }
+            for key in exported_metadata_keys:
+                row[key] = signal.metadata.get(key)
+            rows.append(row)
         return pd.DataFrame(rows)
 
     def _trades_to_frame(self, trades: Sequence[Any]) -> pd.DataFrame:
@@ -728,12 +745,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _read_input_frame(path: str | Path) -> pd.DataFrame:
-    source = Path(path)
-    if source.suffix.lower() == ".parquet":
-        return pd.read_parquet(source)
-    frame = pd.read_csv(source, parse_dates=["open_time"], index_col="open_time")
-    frame.index = pd.to_datetime(frame.index, utc=True)
-    return frame
+    return read_ohlcv_frame(path)
 
 
 def _parse_datetime(value: str) -> datetime:

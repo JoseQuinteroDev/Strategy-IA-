@@ -20,8 +20,10 @@ dependencies = [
 [project.scripts]
 hybrid-quant-data = "hybrid_quant.data.cli:main"
 hq-data-download = "hybrid_quant.data.cli:download_entrypoint"
+hq-data-import = "hybrid_quant.data.cli:import_entrypoint"
 hq-data-split = "hybrid_quant.data.cli:split_entrypoint"
 hybrid-quant-baseline = "hybrid_quant.baseline.runner:main"
+hybrid-quant-analyze-baseline = "hybrid_quant.baseline.analyze:main"
 hybrid-quant-compare-baselines = "hybrid_quant.baseline.comparison:main"
 hybrid-quant-diagnose-baseline = "hybrid_quant.baseline.diagnostics:main"
 hybrid-quant-validate-robustness = "hybrid_quant.validation.robustness:main"

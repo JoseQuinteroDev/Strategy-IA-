@@ -960,23 +960,39 @@ class BaselineComparisonRunner:
 
     def _signals_to_frame(self, signals: Sequence[StrategySignal]) -> pd.DataFrame:
         rows = []
+        exported_metadata_keys = [
+            "strategy_family",
+            "variant_name",
+            "regime",
+            "anchor_name",
+            "anchor_value",
+            "breakout_level",
+            "breakout_trigger",
+            "breakout_distance",
+            "breakout_distance_atr",
+            "breakout_range_width_atr",
+            "momentum",
+            "target_to_cost_ratio",
+            "expected_move_bps",
+        ]
         for signal in signals:
-            rows.append(
-                {
-                    "timestamp": signal.timestamp,
-                    "symbol": signal.symbol,
-                    "side": signal.side.value,
-                    "raw_side": signal.side.value,
-                    "strength": signal.strength,
-                    "entry_price": signal.entry_price,
-                    "stop_price": signal.stop_price,
-                    "target_price": signal.target_price,
-                    "time_stop_bars": signal.time_stop_bars,
-                    "close_on_session_end": signal.close_on_session_end,
-                    "entry_reason": signal.entry_reason,
-                    "rationale": signal.rationale,
-                }
-            )
+            row = {
+                "timestamp": signal.timestamp,
+                "symbol": signal.symbol,
+                "side": signal.side.value,
+                "raw_side": signal.side.value,
+                "strength": signal.strength,
+                "entry_price": signal.entry_price,
+                "stop_price": signal.stop_price,
+                "target_price": signal.target_price,
+                "time_stop_bars": signal.time_stop_bars,
+                "close_on_session_end": signal.close_on_session_end,
+                "entry_reason": signal.entry_reason,
+                "rationale": signal.rationale,
+            }
+            for key in exported_metadata_keys:
+                row[key] = signal.metadata.get(key)
+            rows.append(row)
         return pd.DataFrame(rows)
 
     def _trades_to_frame(self, trades: Sequence[Any]) -> pd.DataFrame:

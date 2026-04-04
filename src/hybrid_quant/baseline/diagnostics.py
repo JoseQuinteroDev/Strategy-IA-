@@ -127,6 +127,34 @@ class BaselineDiagnosticsRunner:
             bucket_name="zscore_bucket",
         )
         stop_target_breakdown = self._build_stop_target_breakdown(enriched_trades)
+        breakout_distance_breakdown = self._build_bucket_breakdown(
+            enriched_trades,
+            column="breakout_distance_atr",
+            bins=[0.0, 0.10, 0.25, 0.50, math.inf],
+            labels=["<=0.10 ATR", "0.10-0.25 ATR", "0.25-0.50 ATR", ">0.50 ATR"],
+            bucket_name="breakout_distance_bucket",
+        )
+        momentum_breakdown = self._build_bucket_breakdown(
+            enriched_trades,
+            column="abs_momentum",
+            bins=[0.0, 0.0025, 0.0050, 0.0100, math.inf],
+            labels=["<=0.25%", "0.25-0.50%", "0.50-1.00%", ">1.00%"],
+            bucket_name="momentum_bucket",
+        )
+        breakout_range_breakdown = self._build_bucket_breakdown(
+            enriched_trades,
+            column="breakout_range_width_atr",
+            bins=[0.0, 1.0, 1.5, 2.0, math.inf],
+            labels=["<=1.0 ATR", "1.0-1.5 ATR", "1.5-2.0 ATR", ">2.0 ATR"],
+            bucket_name="breakout_range_bucket",
+        )
+        target_to_cost_breakdown = self._build_bucket_breakdown(
+            enriched_trades,
+            column="target_to_cost_ratio",
+            bins=[0.0, 1.0, 2.0, 3.0, math.inf],
+            labels=["<=1.0x", "1.0-2.0x", "2.0-3.0x", ">3.0x"],
+            bucket_name="target_to_cost_bucket",
+        )
         signal_side_breakdown = self._build_signal_side_breakdown(artifact_set, enriched_trades)
         risk_replay = self._replay_risk_engine(artifact_set) if include_risk_replay else None
         risk_execution_breakdown = self._build_risk_execution_breakdown(artifact_set, risk_replay)
@@ -164,6 +192,10 @@ class BaselineDiagnosticsRunner:
                 "duration": duration_breakdown.to_dict(orient="records"),
                 "zscore": zscore_breakdown.to_dict(orient="records"),
                 "stop_target": stop_target_breakdown.to_dict(orient="records"),
+                "breakout_distance": breakout_distance_breakdown.to_dict(orient="records"),
+                "momentum": momentum_breakdown.to_dict(orient="records"),
+                "breakout_range": breakout_range_breakdown.to_dict(orient="records"),
+                "target_to_cost": target_to_cost_breakdown.to_dict(orient="records"),
                 "signal_side": signal_side_breakdown.to_dict(orient="records"),
                 "risk_execution": risk_execution_breakdown.to_dict(orient="records"),
             },
@@ -209,6 +241,10 @@ class BaselineDiagnosticsRunner:
         duration_breakdown.to_csv(output_path / "duration_breakdown.csv", index=False)
         zscore_breakdown.to_csv(output_path / "zscore_breakdown.csv", index=False)
         stop_target_breakdown.to_csv(output_path / "stop_target_breakdown.csv", index=False)
+        breakout_distance_breakdown.to_csv(output_path / "breakout_distance_breakdown.csv", index=False)
+        momentum_breakdown.to_csv(output_path / "momentum_breakdown.csv", index=False)
+        breakout_range_breakdown.to_csv(output_path / "breakout_range_breakdown.csv", index=False)
+        target_to_cost_breakdown.to_csv(output_path / "target_to_cost_breakdown.csv", index=False)
         enriched_trades.to_csv(output_path / "enriched_trades.csv", index=False)
 
         return BaselineDiagnosticsArtifacts(
@@ -309,6 +345,7 @@ class BaselineDiagnosticsRunner:
         if trades.empty:
             return trades
 
+        settings = self.application.settings
         ohlcv_index = artifact_set.ohlcv_frame.index
         position_lookup = pd.Series(range(len(ohlcv_index)), index=ohlcv_index)
         entry_positions = position_lookup.reindex(trades["entry_timestamp"])
@@ -328,6 +365,11 @@ class BaselineDiagnosticsRunner:
         joined_prices = ohlcv_lookup.reindex(pd.DatetimeIndex(signal_times))
 
         anchor_column = self._anchor_column_name()
+        breakout_window = settings.strategy.breakout_lookback_bars
+        momentum_window = settings.strategy.momentum_lookback_bars
+        estimated_round_trip_cost_bps = settings.strategy.estimated_round_trip_cost_bps or (
+            2.0 * (settings.backtest.fee_bps + settings.backtest.slippage_bps)
+        )
         trades["signal_time"] = pd.to_datetime(signal_times.values, utc=True)
         trades["signal_side"] = joined_signals["raw_side"] if "raw_side" in joined_signals else joined_signals["side"]
         trades["signal_entry_price"] = pd.to_numeric(joined_signals.get("entry_price"), errors="coerce")
@@ -339,16 +381,85 @@ class BaselineDiagnosticsRunner:
         trades["stop_distance_pct"] = trades["stop_distance"] / trades["signal_entry_price"]
         trades["target_distance_pct"] = trades["target_distance"] / trades["signal_entry_price"]
         trades["risk_reward_ratio"] = trades["target_distance"] / trades["stop_distance"]
+        trades["strategy_family"] = (
+            joined_signals.get("strategy_family")
+            if "strategy_family" in joined_signals
+            else settings.strategy.family
+        )
+        trades["signal_variant_name"] = (
+            joined_signals.get("variant_name")
+            if "variant_name" in joined_signals
+            else settings.strategy.variant_name
+        )
         trades["entry_zscore"] = pd.to_numeric(joined_features.get("zscore_distance_to_mean"), errors="coerce")
         trades["abs_entry_zscore"] = trades["entry_zscore"].abs()
         trades["adx_1h"] = pd.to_numeric(joined_features.get("adx_1h"), errors="coerce")
         trades["ema_200_1h"] = pd.to_numeric(joined_features.get("ema_200_1h"), errors="coerce")
         trades["atr_14"] = pd.to_numeric(joined_features.get("atr_14"), errors="coerce")
         trades["signal_close"] = pd.to_numeric(joined_prices.get("close"), errors="coerce")
-        trades["anchor_name"] = anchor_column
-        trades["anchor_value"] = pd.to_numeric(joined_features.get(anchor_column), errors="coerce")
-        trades["anchor_distance"] = trades["signal_close"] - trades["anchor_value"]
-        trades["anchor_distance_pct"] = trades["anchor_distance"] / trades["anchor_value"]
+        trades["anchor_name"] = anchor_column or ""
+        if anchor_column is None:
+            trades["anchor_value"] = float("nan")
+            trades["anchor_distance"] = float("nan")
+            trades["anchor_distance_pct"] = float("nan")
+        else:
+            trades["anchor_value"] = pd.to_numeric(joined_features.get(anchor_column), errors="coerce")
+            trades["anchor_distance"] = trades["signal_close"] - trades["anchor_value"]
+            trades["anchor_distance_pct"] = trades["anchor_distance"] / trades["anchor_value"]
+
+        breakout_high_column = f"breakout_high_{breakout_window}"
+        breakout_low_column = f"breakout_low_{breakout_window}"
+        breakout_width_column = f"breakout_range_width_{breakout_window}"
+        breakout_width_atr_column = f"breakout_range_width_atr_{breakout_window}"
+        momentum_column = f"momentum_{momentum_window}"
+
+        trades["breakout_high"] = pd.to_numeric(joined_features.get(breakout_high_column), errors="coerce")
+        trades["breakout_low"] = pd.to_numeric(joined_features.get(breakout_low_column), errors="coerce")
+        trades["breakout_range_width"] = pd.to_numeric(joined_features.get(breakout_width_column), errors="coerce")
+        trades["breakout_range_width_atr"] = pd.to_numeric(
+            joined_features.get(breakout_width_atr_column),
+            errors="coerce",
+        )
+        trades["momentum"] = pd.to_numeric(joined_features.get(momentum_column), errors="coerce")
+        trades["abs_momentum"] = trades["momentum"].abs()
+        trades["candle_range_atr"] = pd.to_numeric(joined_features.get("candle_range_atr"), errors="coerce")
+        trades["price_vs_ema_200_1h_pct"] = pd.to_numeric(
+            joined_features.get("price_vs_ema_200_1h_pct"),
+            errors="coerce",
+        )
+        trades["breakout_level"] = pd.to_numeric(joined_signals.get("breakout_level"), errors="coerce")
+        missing_breakout_level = trades["breakout_level"].isna()
+        long_mask = trades["candidate_signal_side"].astype(str).str.lower() == "long"
+        short_mask = trades["candidate_signal_side"].astype(str).str.lower() == "short"
+        trades.loc[missing_breakout_level & long_mask, "breakout_level"] = trades.loc[
+            missing_breakout_level & long_mask,
+            "breakout_high",
+        ]
+        trades.loc[missing_breakout_level & short_mask, "breakout_level"] = trades.loc[
+            missing_breakout_level & short_mask,
+            "breakout_low",
+        ]
+        trades["breakout_distance"] = float("nan")
+        trades.loc[long_mask, "breakout_distance"] = (
+            trades.loc[long_mask, "signal_entry_price"] - trades.loc[long_mask, "breakout_level"]
+        )
+        trades.loc[short_mask, "breakout_distance"] = (
+            trades.loc[short_mask, "breakout_level"] - trades.loc[short_mask, "signal_entry_price"]
+        )
+        trades["breakout_distance_atr"] = trades["breakout_distance"] / trades["atr_14"]
+        trades["estimated_round_trip_cost_bps"] = estimated_round_trip_cost_bps
+        trades["expected_move_bps"] = (
+            trades["target_distance_pct"] * 10000.0
+        )
+        trades["target_to_cost_ratio"] = pd.to_numeric(
+            joined_signals.get("target_to_cost_ratio"),
+            errors="coerce",
+        )
+        missing_target_to_cost = trades["target_to_cost_ratio"].isna()
+        if estimated_round_trip_cost_bps > 0.0:
+            trades.loc[missing_target_to_cost, "target_to_cost_ratio"] = (
+                trades.loc[missing_target_to_cost, "expected_move_bps"] / estimated_round_trip_cost_bps
+            )
         trades["signal_hour_utc"] = trades["signal_time"].dt.hour
         trades["entry_hour_utc"] = trades["entry_timestamp"].dt.hour
         trades["signal_weekday"] = trades["signal_time"].dt.day_name()
@@ -378,6 +489,8 @@ class BaselineDiagnosticsRunner:
         variant_lookup = cost_impact.set_index("variant") if not cost_impact.empty else pd.DataFrame()
 
         return {
+            "strategy_family": self.application.settings.strategy.family,
+            "variant_name": self.application.settings.strategy.variant_name,
             "bars": int(replay_result.metadata.get("bars", 0)),
             "number_of_trades": int(replay_result.trades),
             "gross_pnl": float(enriched_trades["gross_pnl"].sum()),
@@ -762,6 +875,204 @@ class BaselineDiagnosticsRunner:
         exit_reason_breakdown: pd.DataFrame,
         variant_frame: pd.DataFrame,
     ) -> dict[str, Any]:
+        return self._build_family_aware_automatic_conclusion(
+            overall_metrics=overall_metrics,
+            enriched_trades=enriched_trades,
+            monthly_breakdown=monthly_breakdown,
+            hourly_breakdown=hourly_breakdown,
+            side_breakdown=side_breakdown,
+            regime_breakdown=regime_breakdown,
+            exit_reason_breakdown=exit_reason_breakdown,
+            variant_frame=variant_frame,
+        )
+
+    def _build_family_aware_automatic_conclusion(
+        self,
+        *,
+        overall_metrics: dict[str, Any],
+        enriched_trades: pd.DataFrame,
+        monthly_breakdown: pd.DataFrame,
+        hourly_breakdown: pd.DataFrame,
+        side_breakdown: pd.DataFrame,
+        regime_breakdown: pd.DataFrame,
+        exit_reason_breakdown: pd.DataFrame,
+        variant_frame: pd.DataFrame,
+    ) -> dict[str, Any]:
+        family = self.application.settings.strategy.family
+        baseline_pnl = float(overall_metrics["net_pnl"])
+        no_costs_pnl = self._variant_metric(variant_frame, "no_costs", "net_pnl")
+        no_fees_pnl = self._variant_metric(variant_frame, "no_fees", "net_pnl")
+        no_slippage_pnl = self._variant_metric(variant_frame, "no_slippage", "net_pnl")
+        no_time_stop_pnl = self._variant_metric(variant_frame, "no_time_stop", "net_pnl")
+        no_session_close_pnl = self._variant_metric(variant_frame, "no_session_close", "net_pnl")
+        only_longs_pnl = self._variant_metric(variant_frame, "only_longs", "net_pnl")
+        only_shorts_pnl = self._variant_metric(variant_frame, "only_shorts", "net_pnl")
+
+        hourly_loss_share = 0.0
+        toxic_hours: list[str] = []
+        if not hourly_breakdown.empty and baseline_pnl < 0.0:
+            worst_hours = hourly_breakdown.nsmallest(5, "net_pnl")
+            hourly_loss_share = abs(float(worst_hours["net_pnl"].sum())) / abs(baseline_pnl)
+            toxic_hours = [str(int(value)) for value in worst_hours["signal_hour_utc"].tolist()]
+
+        top_causes: list[str] = []
+        if no_costs_pnl is not None and no_costs_pnl > 0.0 > baseline_pnl:
+            top_causes.append(
+                "Execution costs are crushing a thin gross edge: the fixed-signal replay moves "
+                f"from `{baseline_pnl:.2f}` to `{no_costs_pnl:.2f}` without fees or slippage."
+            )
+        if overall_metrics["break_even_gap"] > 0.10:
+            top_causes.append(
+                "The current win-rate and payoff mix is not strong enough: the baseline wins "
+                f"`{overall_metrics['win_rate'] * 100:.2f}%` but would need "
+                f"`{overall_metrics['break_even_win_rate'] * 100:.2f}%` to break even at the current payoff."
+            )
+        if not exit_reason_breakdown.empty:
+            stop_loss_row = exit_reason_breakdown.loc[exit_reason_breakdown["exit_reason"] == "stop_loss"]
+            take_profit_row = exit_reason_breakdown.loc[exit_reason_breakdown["exit_reason"] == "take_profit"]
+            if not stop_loss_row.empty and not take_profit_row.empty:
+                top_causes.append(
+                    "Stop losses are dominating the damage: "
+                    f"`{int(stop_loss_row.iloc[0]['trades'])}` stop exits versus "
+                    f"`{int(take_profit_row.iloc[0]['trades'])}` take-profit exits."
+                )
+        if family == "trend_breakout" and len(top_causes) < 3 and not enriched_trades.empty:
+            median_breakout_distance = float(enriched_trades["breakout_distance_atr"].median())
+            median_target_to_cost = float(enriched_trades["target_to_cost_ratio"].median())
+            median_momentum = float(enriched_trades["abs_momentum"].median())
+            if math.isfinite(median_target_to_cost) and median_target_to_cost < 2.0:
+                top_causes.append(
+                    "Breakouts look too small versus execution friction: the median target-to-cost ratio is only "
+                    f"`{median_target_to_cost:.2f}x`."
+                )
+            elif math.isfinite(median_breakout_distance) and median_breakout_distance < 0.15:
+                top_causes.append(
+                    "Entries are triggering too close to the breakout level: median breakout distance is only "
+                    f"`{median_breakout_distance:.2f} ATR`."
+                )
+            elif math.isfinite(median_momentum) and median_momentum < 0.0030:
+                top_causes.append(
+                    "Momentum confirmation on executed trades is weak: median absolute momentum is only "
+                    f"`{median_momentum * 100:.2f}%`."
+                )
+        if len(top_causes) < 3 and hourly_loss_share > 0.30:
+            top_causes.append(
+                "Losses are clustering in toxic hours; the five worst signal hours explain "
+                f"`{hourly_loss_share * 100:.1f}%` of the total loss."
+            )
+        if len(top_causes) < 3 and only_longs_pnl is not None and only_shorts_pnl is not None:
+            if only_longs_pnl < only_shorts_pnl:
+                top_causes.append("Long trades are the weaker side of the system on this slice.")
+            elif only_shorts_pnl < only_longs_pnl:
+                top_causes.append("Short trades are the weaker side of the system on this slice.")
+        if len(top_causes) < 3 and not regime_breakdown.empty and len(regime_breakdown) == 1:
+            top_causes.append(
+                "The trend/regime filter is working mechanically but not economically: "
+                f"all trades land in `{regime_breakdown.iloc[0]['regime']}` and the PnL still does not hold up."
+            )
+        top_causes = top_causes[:3]
+
+        promising_parts: list[str] = []
+        if no_costs_pnl is not None and no_costs_pnl > 0.0:
+            promising_parts.append(
+                "The setup is not obviously dead: the same signal sequence is profitable before costs."
+            )
+        if overall_metrics["max_drawdown"] <= 0.10:
+            promising_parts.append(
+                f"Drawdown is contained enough for further research at `{overall_metrics['max_drawdown']:.4f}`."
+            )
+        if overall_metrics["payoff_real"] >= 1.0:
+            promising_parts.append(
+                f"The realized payoff is respectable at `{overall_metrics['payoff_real']:.2f}`."
+            )
+        if family == "trend_breakout" and not enriched_trades.empty:
+            median_breakout_range = float(enriched_trades["breakout_range_width_atr"].median())
+            if math.isfinite(median_breakout_range):
+                promising_parts.append(
+                    f"Executed breakouts are not trivially tiny: median prior range width is `{median_breakout_range:.2f} ATR`."
+                )
+
+        weak_parts: list[str] = []
+        if overall_metrics["break_even_gap"] > 0.0:
+            weak_parts.append(
+                f"The strategy still needs `{overall_metrics['break_even_gap'] * 100:.2f}` percentage points more hit rate at the current payoff."
+            )
+        if no_fees_pnl is not None and baseline_pnl < no_fees_pnl:
+            weak_parts.append(
+                f"Fee drag is material: removing fees moves net PnL from `{baseline_pnl:.2f}` to `{no_fees_pnl:.2f}`."
+            )
+        if no_slippage_pnl is not None and baseline_pnl < no_slippage_pnl:
+            weak_parts.append(
+                f"Slippage drag is material: removing slippage moves net PnL from `{baseline_pnl:.2f}` to `{no_slippage_pnl:.2f}`."
+            )
+        if hourly_loss_share > 0.30 and toxic_hours:
+            weak_parts.append(f"Losses are concentrated in specific hours: `{', '.join(toxic_hours)}` UTC.")
+        if family == "trend_breakout" and not enriched_trades.empty:
+            median_target_to_cost = float(enriched_trades["target_to_cost_ratio"].median())
+            if math.isfinite(median_target_to_cost) and median_target_to_cost < 2.5:
+                weak_parts.append(
+                    f"The median target-to-cost ratio is only `{median_target_to_cost:.2f}x`, which leaves little room for execution noise."
+                )
+
+        merits_robust_validation = bool(
+            overall_metrics["number_of_trades"] >= 8
+            and overall_metrics["max_drawdown"] <= 0.12
+            and (
+                baseline_pnl > 0.0
+                or (no_costs_pnl is not None and no_costs_pnl > 0.0 and overall_metrics["payoff_real"] >= 0.8)
+            )
+        )
+        validation_verdict = "GO WITH CAUTION" if merits_robust_validation else "NO-GO"
+
+        next_changes = [
+            "Use this diagnostic evidence to decide whether the current breakout family deserves robust temporal validation.",
+            "If it does not, the next experiment should be a very small refinement around hours or setup quality, not RL.",
+        ]
+        if family == "trend_breakout":
+            next_changes.insert(
+                0,
+                "Check whether removing the worst trading hours materially improves the economics before changing the strategy structure.",
+            )
+
+        do_not_touch = [
+            "Do not add PPO or more model complexity until the standalone rule-based baseline is economically defendable.",
+            "Do not turn this diagnostic into a parameter search; keep the next step small and evidence-driven.",
+        ]
+
+        if baseline_pnl > 0.0:
+            short_answer = (
+                "This breakout baseline looks economically plausible on this slice and deserves robust validation before any RL layer."
+            )
+        elif no_costs_pnl is not None and no_costs_pnl > 0.0:
+            short_answer = (
+                "This breakout baseline may have a fragile raw edge, but execution costs are likely erasing it. It is interesting enough for careful validation, not for RL."
+            )
+        else:
+            short_answer = (
+                "This breakout baseline does not yet show a defendable economic edge on this slice. It should not move to RL, and robust validation only makes sense if you still want to test whether the weak edge is real."
+            )
+
+        return {
+            "short_answer": short_answer,
+            "top_causes": top_causes,
+            "promising_parts": promising_parts,
+            "weak_parts": weak_parts,
+            "merits_robust_validation": merits_robust_validation,
+            "validation_verdict": validation_verdict,
+            "next_minimal_changes": next_changes,
+            "not_worth_touching_yet": do_not_touch,
+            "supporting_observations": {
+                "baseline_pnl": baseline_pnl,
+                "no_costs_pnl": no_costs_pnl,
+                "no_fees_pnl": no_fees_pnl,
+                "no_slippage_pnl": no_slippage_pnl,
+                "no_time_stop_delta": no_time_stop_pnl - baseline_pnl if no_time_stop_pnl is not None else None,
+                "no_session_close_delta": no_session_close_pnl - baseline_pnl if no_session_close_pnl is not None else None,
+                "only_longs_pnl": only_longs_pnl,
+                "only_shorts_pnl": only_shorts_pnl,
+                "toxic_hours_utc": toxic_hours,
+            },
+        }
         baseline_pnl = float(overall_metrics["net_pnl"])
         no_costs_pnl = self._variant_metric(variant_frame, "no_costs", "net_pnl")
         no_fees_pnl = self._variant_metric(variant_frame, "no_fees", "net_pnl")
@@ -862,6 +1173,125 @@ class BaselineDiagnosticsRunner:
         variant_frame: pd.DataFrame,
         signal_side_breakdown: pd.DataFrame,
     ) -> str:
+        return self._build_family_aware_summary_markdown(
+            diagnostics=diagnostics,
+            overall_metrics=overall_metrics,
+            monthly_breakdown=monthly_breakdown,
+            hourly_breakdown=hourly_breakdown,
+            variant_frame=variant_frame,
+            signal_side_breakdown=signal_side_breakdown,
+        )
+
+    def _build_family_aware_summary_markdown(
+        self,
+        *,
+        diagnostics: dict[str, Any],
+        overall_metrics: dict[str, Any],
+        monthly_breakdown: pd.DataFrame,
+        hourly_breakdown: pd.DataFrame,
+        variant_frame: pd.DataFrame,
+        signal_side_breakdown: pd.DataFrame,
+    ) -> str:
+        automatic = diagnostics["automatic_conclusion"]
+        worst_hours = hourly_breakdown.nsmallest(5, "net_pnl") if not hourly_breakdown.empty else pd.DataFrame()
+        worst_month = monthly_breakdown.nsmallest(1, "net_pnl") if not monthly_breakdown.empty else pd.DataFrame()
+
+        lines = [
+            "# Baseline Diagnostics",
+            "",
+            "## Direct Answer",
+            automatic["short_answer"],
+            "",
+            "## Verdict",
+            f"- Robust validation readiness: `{automatic['validation_verdict']}`",
+            f"- Merits robust validation now: `{automatic['merits_robust_validation']}`",
+            "",
+            "## Baseline Snapshot",
+            f"- Strategy family: `{overall_metrics['strategy_family']}`",
+            f"- Variant: `{overall_metrics['variant_name']}`",
+            f"- Trades: `{overall_metrics['number_of_trades']}`",
+            f"- Gross PnL: `{overall_metrics['gross_pnl']:.2f}`",
+            f"- Net PnL: `{overall_metrics['net_pnl']:.2f}`",
+            f"- Fees paid: `{overall_metrics['fees_paid_total']:.2f}`",
+            f"- Estimated fee drag: `{(overall_metrics['estimated_fee_drag'] or 0.0):.2f}`",
+            f"- Estimated slippage drag: `{(overall_metrics['estimated_slippage_drag'] or 0.0):.2f}`",
+            f"- Estimated total cost drag: `{(overall_metrics['estimated_total_cost_drag'] or 0.0):.2f}`",
+            f"- Win rate: `{overall_metrics['win_rate'] * 100:.2f}%`",
+            f"- Average win: `{overall_metrics['average_win']:.2f}`",
+            f"- Average loss: `{overall_metrics['average_loss']:.2f}`",
+            f"- Payoff real: `{overall_metrics['payoff_real']:.4f}`",
+            f"- Expectancy: `{overall_metrics['expectancy']:.2f}`",
+            f"- Break-even win rate: `{overall_metrics['break_even_win_rate'] * 100:.2f}%`",
+            f"- Max drawdown: `{overall_metrics['max_drawdown']:.4f}`",
+            f"- Sharpe: `{overall_metrics['sharpe']:.4f}`",
+            f"- Sortino: `{overall_metrics['sortino']:.4f}`",
+            f"- Calmar: `{overall_metrics['calmar']:.4f}`",
+            f"- Max consecutive losses: `{overall_metrics['max_consecutive_losses']}`",
+            f"- Average holding bars: `{overall_metrics['average_holding_bars']:.2f}`",
+            f"- Percent profitable months: `{overall_metrics['profitable_months_pct'] * 100:.2f}%`",
+            "",
+            "## Top 3 Probable Causes",
+        ]
+        for cause in automatic["top_causes"]:
+            lines.append(f"- {cause}")
+
+        lines.extend(["", "## Promising Parts"])
+        for item in automatic["promising_parts"]:
+            lines.append(f"- {item}")
+
+        lines.extend(["", "## Weak Parts"])
+        for item in automatic["weak_parts"]:
+            lines.append(f"- {item}")
+
+        lines.extend(["", "## Minimum Next Experiment"])
+        for item in automatic["next_minimal_changes"]:
+            lines.append(f"- {item}")
+
+        lines.extend(["", "## What Not To Touch Yet"])
+        for item in automatic["not_worth_touching_yet"]:
+            lines.append(f"- {item}")
+
+        lines.extend(["", "## Key Observations"])
+        if not worst_month.empty:
+            month = worst_month.iloc[0]
+            month_drawdown = month.get("month_drawdown", float("nan"))
+            lines.append(
+                f"- Worst month: `{month['exit_month']}` with net PnL `{month['net_pnl']:.2f}` and monthly drawdown `{month_drawdown:.4f}`."
+            )
+        if not worst_hours.empty:
+            rendered_hours = ", ".join(
+                f"`{int(row['signal_hour_utc']):02d}:00` ({row['net_pnl']:.2f})"
+                for _, row in worst_hours.iterrows()
+            )
+            lines.append(f"- Worst signal hours: {rendered_hours}.")
+        if not signal_side_breakdown.empty:
+            for _, row in signal_side_breakdown.iterrows():
+                lines.append(
+                    f"- Candidate signals `{row['signal_side']}`: `{int(row['candidate_signals'])}`; executed trades `{int(row['executed_trades'])}`; execution rate `{row['execution_rate'] * 100:.2f}%`."
+                )
+
+        if not variant_frame.empty:
+            lines.extend(["", "## Diagnostic Variants"])
+            for variant_name in [
+                "baseline",
+                "no_fees",
+                "no_slippage",
+                "no_costs",
+                "only_longs",
+                "only_shorts",
+                "no_time_stop",
+                "no_session_close",
+                "target_1p5x",
+            ]:
+                row = variant_frame.loc[variant_frame["variant"] == variant_name]
+                if row.empty:
+                    continue
+                metric = row.iloc[0]
+                lines.append(
+                    f"- `{variant_name}`: net PnL `{metric['net_pnl']:.2f}`, trades `{int(metric['trades'])}`, win rate `{metric['win_rate'] * 100:.2f}%`, delta vs baseline `{metric['delta_pnl_vs_baseline']:.2f}`."
+                )
+
+        return "\n".join(lines) + "\n"
         automatic = diagnostics["automatic_conclusion"]
         worst_hours = hourly_breakdown.nsmallest(5, "net_pnl") if not hourly_breakdown.empty else pd.DataFrame()
         worst_month = monthly_breakdown.nsmallest(1, "net_pnl") if not monthly_breakdown.empty else pd.DataFrame()
@@ -1001,7 +1431,9 @@ class BaselineDiagnosticsRunner:
         frame[index_name] = pd.to_datetime(frame[index_name], utc=True)
         return frame.set_index(index_name)
 
-    def _anchor_column_name(self) -> str:
+    def _anchor_column_name(self) -> str | None:
+        if self.application.settings.strategy.family != "mean_reversion":
+            return None
         anchor = self.application.settings.strategy.mean_reversion_anchor.lower()
         return "intraday_vwap" if anchor == "vwap" else "ema_50"
 
