@@ -393,7 +393,18 @@ class HybridTradingEnvironment(TradingEnvironment):
             "risk_blocked_by": list(risk_decision.blocked_by),
             "risk_rationale": risk_decision.rationale,
             "queued_trade": queued_trade,
+            "blocked_attempt": action_effect == "trade_blocked",
             "trades_closed": [trade.exit_reason for trade in trades_closed],
+            "closed_trades_detail": [
+                {
+                    "exit_reason": trade.exit_reason,
+                    "net_pnl": trade.net_pnl,
+                    "gross_pnl": trade.gross_pnl,
+                    "fees_paid": trade.fees_paid,
+                    "return_pct": trade.return_pct,
+                }
+                for trade in trades_closed
+            ],
             "net_pnl_step": float(sum(getattr(trade, "net_pnl", 0.0) for trade in trades_closed)),
             "fees_step": float(sum(getattr(trade, "fees_paid", 0.0) for trade in trades_closed)),
             "portfolio": {
@@ -404,6 +415,7 @@ class HybridTradingEnvironment(TradingEnvironment):
                 "trades_today": portfolio_state.trades_today,
                 "daily_kill_switch_active": portfolio_state.daily_kill_switch_active,
                 "session_allowed": portfolio_state.session_allowed,
+                "open_positions": portfolio_state.open_positions,
             },
             "observation_keys": self._feature_names + self._state_feature_names,
         }

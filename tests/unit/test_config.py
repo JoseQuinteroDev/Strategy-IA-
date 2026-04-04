@@ -16,5 +16,7 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertEqual(settings.market.filter_timeframe, "1H")
         self.assertEqual(settings.strategy.name, "mean_reversion_trend_regime")
         self.assertFalse(settings.rl.enabled)
+        self.assertGreaterEqual(len(settings.rl.seeds), 1)
+        self.assertEqual(settings.rl.train_split, "train")
         self.assertTrue(settings.risk.prop_firm_mode)
         self.assertEqual(settings.backtest.intrabar_exit_policy, "conservative")

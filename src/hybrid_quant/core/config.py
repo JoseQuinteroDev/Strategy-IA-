@@ -126,6 +126,24 @@ class RLConfig:
     algorithm: str = "PPO"
     checkpoint_dir: str = "artifacts/rl"
     total_timesteps: int = 1000000
+    seeds: list[int] = field(default_factory=lambda: [7, 11])
+    policy: str = "MlpPolicy"
+    learning_rate: float = 0.0003
+    n_steps: int = 128
+    batch_size: int = 64
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    ent_coef: float = 0.0
+    clip_range: float = 0.2
+    eval_freq: int = 5000
+    checkpoint_freq: int = 5000
+    n_eval_episodes: int = 1
+    train_split: str = "train"
+    eval_split: str = "validation"
+    test_split: str = "test"
+    device: str = "auto"
+    verbose: int = 1
+    tensorboard_log_dir: str = "artifacts/rl/tensorboard"
 
 
 @dataclass(slots=True)

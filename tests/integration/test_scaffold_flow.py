@@ -17,7 +17,7 @@ from hybrid_quant.env import HybridTradingEnvironment
 from hybrid_quant.features import FeaturePipeline
 from hybrid_quant.paper import PaperTradingRunner
 from hybrid_quant.risk import PropFirmRiskEngine
-from hybrid_quant.rl import DeferredPPOTrainer
+from hybrid_quant.rl import PPOTrainer
 from hybrid_quant.strategy import MeanReversionStrategy
 from hybrid_quant.validation import WalkForwardValidator
 
@@ -137,7 +137,7 @@ class ScaffoldFlowTests(unittest.TestCase):
         initial_observation, reset_info = environment.reset()
         next_observation, reward, terminated, truncated, info = environment.step(HybridTradingEnvironment.ACTION_TAKE_TRADE)
 
-        trainer = DeferredPPOTrainer(algorithm="PPO", total_timesteps=1000000, enabled=False)
+        trainer = PPOTrainer(algorithm="PPO", total_timesteps=1000000, enabled=False)
         artifact = trainer.fit(environment)
 
         paper = PaperTradingRunner(venue="simulator", dry_run=True, heartbeat_seconds=30)
@@ -156,5 +156,5 @@ class ScaffoldFlowTests(unittest.TestCase):
         self.assertFalse(truncated)
         self.assertTrue(info["risk_approved"])
         self.assertIn(info["trades_closed"][0], {"stop_loss", "take_profit"})
-        self.assertEqual(artifact.status, "deferred")
+        self.assertEqual(artifact.status, "disabled")
         self.assertFalse(execution.accepted)

@@ -11,7 +11,7 @@ from .env import HybridTradingEnvironment
 from .features import FeaturePipeline
 from .paper import PaperTradingRunner
 from .risk import PropFirmRiskEngine
-from .rl import DeferredPPOTrainer
+from .rl.trainer import PPOTrainer
 from .strategy import MeanReversionStrategy
 from .validation import WalkForwardValidator
 
@@ -25,7 +25,7 @@ class TradingApplication:
     risk_engine: PropFirmRiskEngine
     backtest_engine: IntradayBacktestEngine
     environment: HybridTradingEnvironment
-    rl_trainer: DeferredPPOTrainer
+    rl_trainer: PPOTrainer
     validator: WalkForwardValidator
     paper_runner: PaperTradingRunner
 
@@ -110,10 +110,26 @@ def build_application(config_dir: str | Path) -> TradingApplication:
         execution_timeframe=settings.market.execution_timeframe,
         filter_timeframe=settings.market.filter_timeframe,
     )
-    rl_trainer = DeferredPPOTrainer(
+    rl_trainer = PPOTrainer(
         algorithm=settings.rl.algorithm,
+        checkpoint_dir=settings.rl.checkpoint_dir,
         total_timesteps=settings.rl.total_timesteps,
         enabled=settings.rl.enabled,
+        seeds=settings.rl.seeds,
+        policy=settings.rl.policy,
+        learning_rate=settings.rl.learning_rate,
+        n_steps=settings.rl.n_steps,
+        batch_size=settings.rl.batch_size,
+        gamma=settings.rl.gamma,
+        gae_lambda=settings.rl.gae_lambda,
+        ent_coef=settings.rl.ent_coef,
+        clip_range=settings.rl.clip_range,
+        eval_freq=settings.rl.eval_freq,
+        checkpoint_freq=settings.rl.checkpoint_freq,
+        n_eval_episodes=settings.rl.n_eval_episodes,
+        device=settings.rl.device,
+        verbose=settings.rl.verbose,
+        tensorboard_log_dir=settings.rl.tensorboard_log_dir,
     )
     validator = WalkForwardValidator(
         walk_forward_splits=settings.validation.walk_forward_splits,
