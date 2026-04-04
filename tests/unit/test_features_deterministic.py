@@ -38,8 +38,15 @@ class DeterministicFeatureTests(unittest.TestCase):
             "realized_volatility_20",
             "candle_range",
             "candle_range_pct",
+            "candle_range_atr",
             "distance_to_mean",
             "zscore_distance_to_mean",
+            "breakout_high_20",
+            "breakout_low_20",
+            "breakout_range_width_20",
+            "breakout_range_width_atr_20",
+            "momentum_20",
+            "price_vs_ema_200_1h_pct",
             "hour_utc",
             "day_of_week",
             "session_asia",
@@ -80,6 +87,28 @@ class DeterministicFeatureTests(unittest.TestCase):
         self.assertFalse(features["adx_1h"].dropna().empty)
         self.assertGreaterEqual(features["adx_1h"].dropna().iloc[-1], 0.0)
         self.assertFalse(features["zscore_distance_to_mean"].dropna().empty)
+        self.assertFalse(features["momentum_20"].dropna().empty)
+        self.assertFalse(features["breakout_high_20"].dropna().empty)
+
+    def test_breakout_features_are_causal_and_shifted(self) -> None:
+        df = _sample_ohlcv(periods=120)
+
+        features = build_features(df)
+        probe_index = df.index[40]
+        probe_position = df.index.get_loc(probe_index)
+        previous_high = df["high"].iloc[probe_position - 20 : probe_position].max()
+        previous_low = df["low"].iloc[probe_position - 20 : probe_position].min()
+
+        self.assertAlmostEqual(features.loc[probe_index, "breakout_high_20"], previous_high)
+        self.assertAlmostEqual(features.loc[probe_index, "breakout_low_20"], previous_low)
+        self.assertAlmostEqual(
+            features.loc[probe_index, "breakout_range_width_20"],
+            previous_high - previous_low,
+        )
+        self.assertAlmostEqual(
+            features.loc[probe_index, "momentum_20"],
+            (df["close"].iloc[probe_position] / df["close"].iloc[probe_position - 20]) - 1.0,
+        )
 
     def test_build_features_validates_required_columns(self) -> None:
         df = _sample_ohlcv().drop(columns=["volume"])

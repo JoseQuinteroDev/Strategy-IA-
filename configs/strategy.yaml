@@ -1,5 +1,7 @@
 strategy:
   name: mean_reversion_trend_regime
+  variant_name: baseline_v1
+  family: mean_reversion
   mode: rule_based
   signal_cooldown_bars: 3
   entry_zscore: 2.0
@@ -14,3 +16,11 @@ strategy:
   session_close_hour_utc: 23
   session_close_minute_utc: 55
   no_entry_minutes_before_close: 30
+  blocked_hours_utc: []
+  allowed_hours_utc: []
+  allowed_weekdays: []
+  exclude_weekends: false
+  minimum_anchor_distance_atr: 0.0
+  minimum_expected_move_bps: 0.0
+  minimum_target_to_cost_ratio: 0.0
+  estimated_round_trip_cost_bps: 0.0

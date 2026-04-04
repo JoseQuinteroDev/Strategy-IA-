@@ -17,6 +17,8 @@ class DeterministicFeatureConfig:
     intraday_ema_span: int = 50
     realized_vol_window: int = 20
     zscore_window: int = 50
+    breakout_window: int = 20
+    momentum_window: int = 20
 
 
 def build_features(
@@ -63,6 +65,27 @@ def build_features(
 
     features["candle_range"] = frame["high"] - frame["low"]
     features["candle_range_pct"] = features["candle_range"] / frame["close"].replace(0.0, np.nan)
+    features["candle_range_atr"] = features["candle_range"] / atr.replace(0.0, np.nan)
+
+    breakout_high = frame["high"].rolling(cfg.breakout_window, min_periods=cfg.breakout_window).max().shift(1)
+    breakout_low = frame["low"].rolling(cfg.breakout_window, min_periods=cfg.breakout_window).min().shift(1)
+    breakout_range_width = breakout_high - breakout_low
+    features[f"breakout_high_{cfg.breakout_window}"] = breakout_high
+    features[f"breakout_low_{cfg.breakout_window}"] = breakout_low
+    features[f"breakout_range_width_{cfg.breakout_window}"] = breakout_range_width
+    features[f"breakout_range_width_pct_{cfg.breakout_window}"] = (
+        breakout_range_width / frame["close"].replace(0.0, np.nan)
+    )
+    features[f"breakout_range_width_atr_{cfg.breakout_window}"] = (
+        breakout_range_width / atr.replace(0.0, np.nan)
+    )
+    features[f"momentum_{cfg.momentum_window}"] = frame["close"].pct_change(
+        cfg.momentum_window,
+        fill_method=None,
+    )
+    features["price_vs_ema_200_1h_pct"] = (
+        (frame["close"] - features["ema_200_1h"]) / features["ema_200_1h"].replace(0.0, np.nan)
+    )
 
     mean_anchor = features["intraday_vwap"].combine_first(features["ema_50"])
     distance_to_mean = frame["close"] - mean_anchor

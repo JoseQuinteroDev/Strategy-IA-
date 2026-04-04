@@ -1,4 +1,8 @@
-from .walk_forward import Validator, WalkForwardValidator
+from .walk_forward import RollingWindow, Validator, WalkForwardValidator, build_rolling_windows
 
-__all__ = ["Validator", "WalkForwardValidator"]
-
+__all__ = [
+    "RollingWindow",
+    "Validator",
+    "WalkForwardValidator",
+    "build_rolling_windows",
+]

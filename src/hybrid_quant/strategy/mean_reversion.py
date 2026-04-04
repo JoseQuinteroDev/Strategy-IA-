@@ -1,24 +1,20 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
 import math
+from typing import Any
 
 from hybrid_quant.core import SignalSide, StrategyContext, StrategySignal
 
-
-class Strategy(ABC):
-    @abstractmethod
-    def generate(self, context: StrategyContext) -> StrategySignal:
-        """Produce a signal from market context."""
+from .base import IntradayStrategySupport, Strategy
 
 
 @dataclass(slots=True)
-class MeanReversionStrategy(Strategy):
+class MeanReversionStrategy(Strategy, IntradayStrategySupport):
     name: str
+    variant_name: str
     entry_zscore: float
-    exit_zscore: float
+    exit_zscore: float | None
     trend_filter: str
     regime_filter: str
     execution_timeframe: str
@@ -31,11 +27,21 @@ class MeanReversionStrategy(Strategy):
     session_close_hour_utc: int = 23
     session_close_minute_utc: int = 55
     no_entry_minutes_before_close: int = 30
+    blocked_hours_utc: list[int] | None = None
+    allowed_hours_utc: list[int] | None = None
+    allowed_weekdays: list[int] | None = None
+    exclude_weekends: bool = False
+    minimum_anchor_distance_atr: float = 0.0
+    minimum_expected_move_bps: float = 0.0
+    minimum_target_to_cost_ratio: float = 0.0
+    estimated_round_trip_cost_bps: float = 0.0
 
     def generate(self, context: StrategyContext) -> StrategySignal:
         timestamp = self._resolve_timestamp(context)
         base_metadata = {
             "strategy": self.name,
+            "variant_name": self.variant_name,
+            "strategy_family": "mean_reversion",
             "execution_timeframe": self.execution_timeframe,
             "filter_timeframe": self.filter_timeframe,
             "trend_filter": self.trend_filter,
@@ -44,6 +50,14 @@ class MeanReversionStrategy(Strategy):
             "time_stop_bars": self.time_stop_bars,
             "close_on_session_end": True,
             "regime": context.regime,
+            "blocked_hours_utc": list(self.blocked_hours_utc or []),
+            "allowed_hours_utc": list(self.allowed_hours_utc or []),
+            "allowed_weekdays": list(self.allowed_weekdays or []),
+            "exclude_weekends": self.exclude_weekends,
+            "minimum_anchor_distance_atr": self.minimum_anchor_distance_atr,
+            "minimum_expected_move_bps": self.minimum_expected_move_bps,
+            "minimum_target_to_cost_ratio": self.minimum_target_to_cost_ratio,
+            "estimated_round_trip_cost_bps": self.estimated_round_trip_cost_bps,
         }
 
         if not context.bars or not context.features:
@@ -72,6 +86,15 @@ class MeanReversionStrategy(Strategy):
                 timestamp=timestamp,
                 rationale="No new entries inside the session-close buffer.",
                 metadata={**base_metadata, "minutes_to_close": minutes_to_close},
+            )
+
+        session_gate_reason = self._session_gate_reason(timestamp)
+        if session_gate_reason is not None:
+            return self._flat_signal(
+                symbol=context.symbol,
+                timestamp=timestamp,
+                rationale=session_gate_reason,
+                metadata={**base_metadata, "session_gate": True},
             )
 
         ema_200_1h = self._get_feature_value(latest_features, "ema_200_1h")
@@ -123,6 +146,29 @@ class MeanReversionStrategy(Strategy):
                 f"Long mean reversion: price is above 1H EMA200, ADX is contained, and "
                 f"close is stretched below {mean_anchor_name}."
             )
+            quality_reason, quality_metadata = self._setup_quality_failure(
+                side=SignalSide.LONG,
+                close_price=close_price,
+                atr=atr,
+                zscore=zscore,
+                mean_anchor_name=mean_anchor_name,
+                mean_anchor_value=mean_anchor_value,
+            )
+            if quality_reason is not None:
+                return self._flat_signal(
+                    symbol=context.symbol,
+                    timestamp=timestamp,
+                    rationale=quality_reason,
+                    metadata={
+                        **base_metadata,
+                        "ema_200_1h": ema_200_1h,
+                        "adx_1h": adx_1h,
+                        "anchor_name": mean_anchor_name,
+                        "anchor_value": mean_anchor_value,
+                        "zscore_distance_to_mean": zscore,
+                        **quality_metadata,
+                    },
+                )
             return self._entry_signal(
                 symbol=context.symbol,
                 timestamp=timestamp,
@@ -137,6 +183,7 @@ class MeanReversionStrategy(Strategy):
                     "anchor_name": mean_anchor_name,
                     "anchor_value": mean_anchor_value,
                     "zscore_distance_to_mean": zscore,
+                    **quality_metadata,
                 },
             )
 
@@ -145,6 +192,29 @@ class MeanReversionStrategy(Strategy):
                 f"Short mean reversion: price is below 1H EMA200, ADX is contained, and "
                 f"close is stretched above {mean_anchor_name}."
             )
+            quality_reason, quality_metadata = self._setup_quality_failure(
+                side=SignalSide.SHORT,
+                close_price=close_price,
+                atr=atr,
+                zscore=zscore,
+                mean_anchor_name=mean_anchor_name,
+                mean_anchor_value=mean_anchor_value,
+            )
+            if quality_reason is not None:
+                return self._flat_signal(
+                    symbol=context.symbol,
+                    timestamp=timestamp,
+                    rationale=quality_reason,
+                    metadata={
+                        **base_metadata,
+                        "ema_200_1h": ema_200_1h,
+                        "adx_1h": adx_1h,
+                        "anchor_name": mean_anchor_name,
+                        "anchor_value": mean_anchor_value,
+                        "zscore_distance_to_mean": zscore,
+                        **quality_metadata,
+                    },
+                )
             return self._entry_signal(
                 symbol=context.symbol,
                 timestamp=timestamp,
@@ -159,6 +229,7 @@ class MeanReversionStrategy(Strategy):
                     "anchor_name": mean_anchor_name,
                     "anchor_value": mean_anchor_value,
                     "zscore_distance_to_mean": zscore,
+                    **quality_metadata,
                 },
             )
 
@@ -176,13 +247,6 @@ class MeanReversionStrategy(Strategy):
             },
         )
 
-    def _resolve_timestamp(self, context: StrategyContext) -> datetime:
-        if context.features:
-            return context.features[-1].timestamp
-        if context.bars:
-            return context.bars[-1].timestamp
-        return datetime.now(UTC)
-
     def _resolve_anchor_name(self, features: dict[str, float]) -> str:
         if self.mean_reversion_anchor == "ema50":
             return "ema_50"
@@ -192,91 +256,57 @@ class MeanReversionStrategy(Strategy):
             return "intraday_vwap"
         return "ema_50"
 
-    def _get_feature_value(self, values: dict[str, float], name: str) -> float | None:
-        raw_value = values.get(name)
-        if raw_value is None:
-            return None
-        if not math.isfinite(float(raw_value)):
-            return None
-        return float(raw_value)
-
-    def _trend_bias(self, close_price: float, ema_200_1h: float) -> SignalSide | None:
-        if close_price > ema_200_1h:
-            return SignalSide.LONG
-        if close_price < ema_200_1h:
-            return SignalSide.SHORT
-        return None
-
-    def _entry_signal(
+    def _setup_quality_failure(
         self,
         *,
-        symbol: str,
-        timestamp: datetime,
         side: SignalSide,
-        entry_price: float,
+        close_price: float,
         atr: float,
-        entry_reason: str,
-        metadata: dict[str, float | int | str | bool],
-    ) -> StrategySignal:
-        if side == SignalSide.LONG:
-            stop_price = entry_price - (atr * self.atr_multiple_stop)
-            target_price = entry_price + (atr * self.atr_multiple_target)
-        else:
-            stop_price = entry_price + (atr * self.atr_multiple_stop)
-            target_price = entry_price - (atr * self.atr_multiple_target)
-
-        return StrategySignal(
-            symbol=symbol,
-            timestamp=timestamp,
-            side=side,
-            strength=1.0,
-            rationale=entry_reason,
-            entry_price=entry_price,
-            stop_price=stop_price,
-            target_price=target_price,
-            time_stop_bars=self.time_stop_bars,
-            close_on_session_end=True,
-            entry_reason=entry_reason,
-            metadata=metadata,
+        zscore: float,
+        mean_anchor_name: str,
+        mean_anchor_value: float,
+    ) -> tuple[str | None, dict[str, Any]]:
+        anchor_distance = abs(close_price - mean_anchor_value)
+        anchor_distance_atr = anchor_distance / atr if atr > 0.0 else float("nan")
+        expected_move = atr * self.atr_multiple_target
+        expected_move_bps = (expected_move / close_price) * 10000.0 if close_price > 0.0 else float("nan")
+        target_to_cost_ratio = (
+            expected_move_bps / self.estimated_round_trip_cost_bps
+            if self.estimated_round_trip_cost_bps > 0.0 and math.isfinite(expected_move_bps)
+            else float("inf")
         )
+        metadata = {
+            "entry_side": side.value,
+            "anchor_distance": anchor_distance,
+            "anchor_distance_atr": anchor_distance_atr,
+            "expected_move_bps": expected_move_bps,
+            "target_to_cost_ratio": target_to_cost_ratio,
+            "abs_entry_zscore": abs(zscore),
+            "anchor_name": mean_anchor_name,
+        }
 
-    def _flat_signal(
-        self,
-        *,
-        symbol: str,
-        timestamp: datetime,
-        rationale: str,
-        metadata: dict[str, float | int | str | bool],
-    ) -> StrategySignal:
-        return StrategySignal(
-            symbol=symbol,
-            timestamp=timestamp,
-            side=SignalSide.FLAT,
-            strength=0.0,
-            rationale=rationale,
-            entry_price=None,
-            stop_price=None,
-            target_price=None,
-            time_stop_bars=self.time_stop_bars,
-            close_on_session_end=True,
-            entry_reason=None,
-            metadata=metadata,
-        )
+        if self.minimum_anchor_distance_atr > 0.0 and (
+            not math.isfinite(anchor_distance_atr) or anchor_distance_atr < self.minimum_anchor_distance_atr
+        ):
+            return (
+                "Setup rejected because the stretch versus the mean anchor is too small relative to ATR.",
+                metadata,
+            )
 
-    def _minutes_to_session_close(self, timestamp: datetime) -> int:
-        normalized = timestamp.astimezone(UTC)
-        session_close = normalized.replace(
-            hour=self.session_close_hour_utc,
-            minute=self.session_close_minute_utc,
-            second=0,
-            microsecond=0,
-        )
-        remaining = session_close - normalized
-        if remaining <= timedelta(0):
-            return 0
-        return int(remaining.total_seconds() // 60)
+        if self.minimum_expected_move_bps > 0.0 and (
+            not math.isfinite(expected_move_bps) or expected_move_bps < self.minimum_expected_move_bps
+        ):
+            return (
+                "Setup rejected because the projected move is too small in basis points.",
+                metadata,
+            )
 
-    def _is_session_close(self, timestamp: datetime) -> bool:
-        normalized = timestamp.astimezone(UTC)
-        session_close = time(self.session_close_hour_utc, self.session_close_minute_utc)
-        return normalized.time() >= session_close
+        if self.minimum_target_to_cost_ratio > 0.0 and (
+            not math.isfinite(target_to_cost_ratio) or target_to_cost_ratio < self.minimum_target_to_cost_ratio
+        ):
+            return (
+                "Setup rejected because the target-to-cost ratio is too weak for a cost-aware baseline.",
+                metadata,
+            )
+
+        return None, metadata

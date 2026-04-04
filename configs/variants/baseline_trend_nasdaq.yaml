@@ -1,0 +1,87 @@
+market:
+  symbol: NQ
+  venue: cme
+  execution_timeframe: 5m
+  filter_timeframe: 1H
+  style: intraday
+
+data:
+  provider: local_file
+  allow_gaps: true
+
+features:
+  enabled:
+    - log_return
+    - atr_14
+    - ema_200_1h
+    - adx_1h
+    - intraday_vwap
+    - ema_50
+    - realized_volatility_20
+    - candle_range
+    - candle_range_pct
+    - candle_range_atr
+    - distance_to_mean
+    - zscore_distance_to_mean
+    - breakout_high_20
+    - breakout_low_20
+    - breakout_range_width_20
+    - breakout_range_width_atr_20
+    - momentum_20
+    - price_vs_ema_200_1h_pct
+    - hour_utc
+    - day_of_week
+    - session_asia
+    - session_europe
+    - session_us
+
+strategy:
+  family: trend_breakout
+  name: trend_breakout_nasdaq
+  variant_name: baseline_trend_nasdaq
+  trend_filter: ema_200_1h
+  regime_filter: adx_1h
+  signal_cooldown_bars: 6
+  exit_zscore: null
+  adx_threshold: 22.0
+  atr_multiple_stop: 1.0
+  atr_multiple_target: 2.0
+  time_stop_bars: 18
+  session_close_hour_utc: 20
+  session_close_minute_utc: 55
+  no_entry_minutes_before_close: 20
+  allowed_hours_utc:
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+  allowed_weekdays:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+  exclude_weekends: true
+  minimum_expected_move_bps: 12.0
+  minimum_target_to_cost_ratio: 2.5
+  breakout_lookback_bars: 20
+  breakout_buffer_atr: 0.10
+  minimum_breakout_range_atr: 1.2
+  momentum_lookback_bars: 20
+  minimum_momentum_abs: 0.0025
+  minimum_candle_range_atr: 0.75
+
+risk:
+  session_start_hour_utc: 13
+  session_start_minute_utc: 30
+  session_end_hour_utc: 20
+  session_end_minute_utc: 55
+  max_trades_per_day: 4
+
+backtest:
+  fee_bps: 0.10
+  slippage_bps: 0.35

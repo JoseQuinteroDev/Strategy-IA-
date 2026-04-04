@@ -12,7 +12,7 @@ from .features import FeaturePipeline
 from .paper import PaperTradingRunner
 from .risk import PropFirmRiskEngine
 from .rl.trainer import PPOTrainer
-from .strategy import MeanReversionStrategy
+from .strategy import Strategy, build_strategy
 from .validation import WalkForwardValidator
 
 
@@ -21,7 +21,7 @@ class TradingApplication:
     settings: Settings
     data_source: InMemoryDataSource
     feature_pipeline: FeaturePipeline
-    strategy: MeanReversionStrategy
+    strategy: Strategy
     risk_engine: PropFirmRiskEngine
     backtest_engine: IntradayBacktestEngine
     environment: HybridTradingEnvironment
@@ -44,6 +44,13 @@ class TradingApplication:
 
 def build_application(config_dir: str | Path) -> TradingApplication:
     settings = load_settings(config_dir)
+    return build_application_from_settings(settings)
+
+
+def build_application_from_settings(settings: Settings) -> TradingApplication:
+    estimated_round_trip_cost_bps = settings.strategy.estimated_round_trip_cost_bps or (
+        2.0 * (settings.backtest.fee_bps + settings.backtest.slippage_bps)
+    )
 
     data_source = InMemoryDataSource(
         symbol=settings.market.symbol,
@@ -56,22 +63,9 @@ def build_application(config_dir: str | Path) -> TradingApplication:
         regime_window=settings.features.regime_window,
         normalize=settings.features.normalize,
     )
-    strategy = MeanReversionStrategy(
-        name=settings.strategy.name,
-        entry_zscore=settings.strategy.entry_zscore,
-        exit_zscore=settings.strategy.exit_zscore,
-        trend_filter=settings.strategy.trend_filter,
-        regime_filter=settings.strategy.regime_filter,
-        execution_timeframe=settings.market.execution_timeframe,
-        filter_timeframe=settings.market.filter_timeframe,
-        mean_reversion_anchor=settings.strategy.mean_reversion_anchor,
-        adx_threshold=settings.strategy.adx_threshold,
-        atr_multiple_stop=settings.strategy.atr_multiple_stop,
-        atr_multiple_target=settings.strategy.atr_multiple_target,
-        time_stop_bars=settings.strategy.time_stop_bars,
-        session_close_hour_utc=settings.strategy.session_close_hour_utc,
-        session_close_minute_utc=settings.strategy.session_close_minute_utc,
-        no_entry_minutes_before_close=settings.strategy.no_entry_minutes_before_close,
+    strategy = build_strategy(
+        settings,
+        estimated_round_trip_cost_bps=estimated_round_trip_cost_bps,
     )
     risk_engine = PropFirmRiskEngine(
         max_risk_per_trade=settings.risk.max_risk_per_trade,
@@ -97,7 +91,7 @@ def build_application(config_dir: str | Path) -> TradingApplication:
         intrabar_exit_policy=settings.backtest.intrabar_exit_policy,
     )
     environment = HybridTradingEnvironment(
-        observation_window=settings.env.observation_window,
+        state_context_bars=settings.env.effective_state_context_bars,
         max_steps=settings.env.max_steps,
         reward_mode=settings.env.reward_mode,
         strategy=strategy,

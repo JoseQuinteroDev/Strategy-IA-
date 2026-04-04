@@ -1,4 +1,4 @@
-from .config import Settings, load_settings
+from .config import Settings, apply_settings_overrides, load_settings
 from .contracts import (
     BacktestRequest,
     BacktestResult,
@@ -38,5 +38,6 @@ __all__ = [
     "StrategySignal",
     "TrainingArtifact",
     "ValidationReport",
+    "apply_settings_overrides",
     "load_settings",
 ]

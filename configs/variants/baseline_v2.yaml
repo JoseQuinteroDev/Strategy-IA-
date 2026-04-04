@@ -1,0 +1,14 @@
+strategy:
+  name: mean_reversion_trend_regime_v2
+  variant_name: baseline_v2
+  signal_cooldown_bars: 6
+  adx_threshold: 18.0
+  atr_multiple_target: 1.5
+  blocked_hours_utc:
+    - 5
+    - 7
+    - 8
+    - 9
+    - 13
+  exclude_weekends: true
+  minimum_target_to_cost_ratio: 3.0

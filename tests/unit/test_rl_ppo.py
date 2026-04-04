@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import tempfile
 import unittest
-from datetime import UTC, datetime, timedelta
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
 import pandas as pd
 
-from hybrid_quant.core import SignalSide, StrategySignal
 from hybrid_quant.rl import PPOTrainingRunner
 from hybrid_quant.rl.dataset import RLEpisodeBuilder
+from hybrid_quant.rl.evaluation import baseline_policy, evaluate_policy, random_policy, sb3_policy
+from hybrid_quant.core import SignalSide, StrategySignal
 
 
 class _FakeCheckpointCallback:
@@ -132,7 +134,7 @@ def _synthetic_signals(self, bars, features):
 
 
 class PPOTrainingRunnerTests(unittest.TestCase):
-    def test_runner_smoke_generates_training_and_evaluation_artifacts(self) -> None:
+    def _build_runner(self) -> PPOTrainingRunner:
         config_dir = Path(__file__).resolve().parents[2] / "configs"
         runner = PPOTrainingRunner.from_config(config_dir)
         runner.application.settings.backtest.fee_bps = 0.0
@@ -141,21 +143,25 @@ class PPOTrainingRunnerTests(unittest.TestCase):
         runner.application.rl_trainer.eval_freq = 4
         runner.application.rl_trainer.checkpoint_freq = 4
         runner.application.rl_trainer.seeds = [3]
+        return runner
 
-        original_generate_signals = RLEpisodeBuilder._generate_signals
-        RLEpisodeBuilder._generate_signals = _synthetic_signals  # type: ignore[assignment]
+    @contextlib.contextmanager
+    def _patched_sb3_backend(self):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(RLEpisodeBuilder, "_generate_signals", _synthetic_signals))
+            stack.enter_context(mock.patch("hybrid_quant.rl.sb3_compat.SB3_AVAILABLE", True))
+            stack.enter_context(mock.patch("hybrid_quant.rl.sb3_compat.PPO", _FakePPO))
+            stack.enter_context(mock.patch("hybrid_quant.rl.sb3_compat.CheckpointCallback", _FakeCheckpointCallback))
+            stack.enter_context(mock.patch("hybrid_quant.rl.sb3_compat.EvalCallback", _FakeEvalCallback))
+            stack.enter_context(mock.patch("hybrid_quant.rl.sb3_compat.CallbackList", _FakeCallbackList))
+            stack.enter_context(mock.patch("hybrid_quant.rl.sb3_compat.check_env", _fake_check_env))
+            yield
 
-        with tempfile.TemporaryDirectory() as tmp_dir, \
-            mock.patch("hybrid_quant.rl.sb3_compat.SB3_AVAILABLE", True), \
-            mock.patch("hybrid_quant.rl.sb3_compat.PPO", _FakePPO), \
-            mock.patch("hybrid_quant.rl.sb3_compat.CheckpointCallback", _FakeCheckpointCallback), \
-            mock.patch("hybrid_quant.rl.sb3_compat.EvalCallback", _FakeEvalCallback), \
-            mock.patch("hybrid_quant.rl.sb3_compat.CallbackList", _FakeCallbackList), \
-            mock.patch("hybrid_quant.rl.sb3_compat.check_env", _fake_check_env):
-            try:
-                artifacts = runner.run(output_dir=tmp_dir, input_frame=_frame(), seeds=[3])
-            finally:
-                RLEpisodeBuilder._generate_signals = original_generate_signals
+    def test_runner_smoke_generates_training_and_evaluation_artifacts(self) -> None:
+        runner = self._build_runner()
+
+        with tempfile.TemporaryDirectory() as tmp_dir, self._patched_sb3_backend():
+            artifacts = runner.run(output_dir=tmp_dir, input_frame=_frame(), seeds=[3])
 
             self.assertTrue(artifacts.report_path.exists())
             self.assertTrue(artifacts.comparison_path.exists())
@@ -167,17 +173,78 @@ class PPOTrainingRunnerTests(unittest.TestCase):
             self.assertIn("comparison", report)
             self.assertIn("ppo_trained", report["comparison"])
 
-            comparison = json.loads(artifacts.comparison_path.read_text(encoding="utf-8"))
-            for key in ["baseline_without_rl", "random_policy", "ppo_trained"]:
-                self.assertIn(key, comparison)
-                self.assertIn("mean_reward", comparison[key])
-                self.assertIn("net_pnl", comparison[key])
-                self.assertIn("number_of_trades", comparison[key])
-                self.assertIn("blocked_by_risk", comparison[key])
-
             best_model = Path(tmp_dir) / "models" / "seed-3" / "best_model" / "best_model.zip"
             last_model = Path(tmp_dir) / "models" / "seed-3" / "last_model.zip"
             training_artifact = Path(tmp_dir) / "models" / "training_artifact.json"
             self.assertTrue(best_model.exists())
             self.assertTrue(last_model.exists())
             self.assertTrue(training_artifact.exists())
+
+    def test_trainer_fit_can_load_best_model(self) -> None:
+        runner = self._build_runner()
+        trainer = replace(
+            runner.application.rl_trainer,
+            enabled=True,
+            total_timesteps=12,
+            eval_freq=4,
+            checkpoint_freq=4,
+            seeds=[5],
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir, self._patched_sb3_backend():
+            frame = runner.episode_builder.prepare_frame(input_frame=_frame())
+            dataset = runner.episode_builder.build_dataset(frame)
+            env = runner._make_env_factory(dataset.get("train"))()
+            artifact = trainer.fit(env, output_dir=Path(tmp_dir) / "fit-models", seeds=[5])
+
+            self.assertEqual(artifact.status, "trained")
+            best_model = Path(tmp_dir) / "fit-models" / "seed-5" / "best_model" / "best_model.zip"
+            self.assertTrue(best_model.exists())
+
+            model = trainer.load_model(best_model, environment=env)
+            observation, _ = env.reset(seed=5)
+            action, _ = model.predict(observation, deterministic=True)
+            self.assertEqual(int(action), 1)
+
+    def test_evaluation_pipeline_reports_all_policy_metrics(self) -> None:
+        runner = self._build_runner()
+
+        with self._patched_sb3_backend():
+            frame = runner.episode_builder.prepare_frame(input_frame=_frame())
+            dataset = runner.episode_builder.build_dataset(frame)
+            env_factory = runner._make_env_factory(dataset.get("test"))
+            fake_model = _FakePPO.load("fake-model.zip", env=env_factory())
+            summaries = {
+                "baseline_without_rl": evaluate_policy(
+                    policy_name="baseline_without_rl",
+                    env_factory=env_factory,
+                    action_fn=baseline_policy,
+                    seeds=[3],
+                ),
+                "random_policy": evaluate_policy(
+                    policy_name="random_policy",
+                    env_factory=env_factory,
+                    action_fn=random_policy,
+                    seeds=[3],
+                ),
+                "ppo_trained": evaluate_policy(
+                    policy_name="ppo_trained",
+                    env_factory=env_factory,
+                    action_fn=sb3_policy(fake_model),
+                    seeds=[3],
+                ),
+            }
+
+        for label, summary in summaries.items():
+            payload = summary.to_dict()
+            self.assertEqual(payload["policy_name"], label)
+            self.assertEqual(payload["episodes"], 1)
+            self.assertIn("mean_reward", payload)
+            self.assertIn("net_pnl", payload)
+            self.assertIn("win_rate", payload)
+            self.assertIn("max_drawdown", payload)
+            self.assertIn("total_return", payload)
+            self.assertIn("number_of_trades", payload)
+            self.assertIn("blocked_by_risk", payload)
+            self.assertIn("terminated_by_risk_limit", payload)
+            self.assertIn("truncated_by_max_steps", payload)

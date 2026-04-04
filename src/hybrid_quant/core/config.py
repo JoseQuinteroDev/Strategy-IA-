@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -69,10 +69,12 @@ class FeatureConfig:
 @dataclass(slots=True)
 class StrategyConfig:
     name: str = "mean_reversion_trend_regime"
+    variant_name: str = "baseline_v1"
+    family: str = "mean_reversion"
     mode: str = "rule_based"
     signal_cooldown_bars: int = 3
     entry_zscore: float = 2.0
-    exit_zscore: float = 0.5
+    exit_zscore: float | None = 0.5
     trend_filter: str = "ema_200_1h"
     regime_filter: str = "adx_1h"
     mean_reversion_anchor: str = "vwap"
@@ -83,6 +85,20 @@ class StrategyConfig:
     session_close_hour_utc: int = 23
     session_close_minute_utc: int = 55
     no_entry_minutes_before_close: int = 30
+    blocked_hours_utc: list[int] = field(default_factory=list)
+    allowed_hours_utc: list[int] = field(default_factory=list)
+    allowed_weekdays: list[int] = field(default_factory=list)
+    exclude_weekends: bool = False
+    minimum_anchor_distance_atr: float = 0.0
+    minimum_expected_move_bps: float = 0.0
+    minimum_target_to_cost_ratio: float = 0.0
+    estimated_round_trip_cost_bps: float = 0.0
+    breakout_lookback_bars: int = 20
+    breakout_buffer_atr: float = 0.0
+    minimum_breakout_range_atr: float = 0.0
+    momentum_lookback_bars: int = 20
+    minimum_momentum_abs: float = 0.0
+    minimum_candle_range_atr: float = 0.0
 
 
 @dataclass(slots=True)
@@ -116,8 +132,14 @@ class BacktestConfig:
 class EnvConfig:
     max_steps: int = 3000
     reward_mode: str = "risk_adjusted"
-    observation_window: int = 64
-    action_space: str = "target_position"
+    state_context_bars: int = 64
+    observation_window: int | None = None
+    action_space: str = "candidate_trade_discrete"
+
+    @property
+    def effective_state_context_bars(self) -> int:
+        raw_value = self.observation_window if self.observation_window is not None else self.state_context_bars
+        return max(1, int(raw_value))
 
 
 @dataclass(slots=True)
@@ -147,11 +169,54 @@ class RLConfig:
 
 
 @dataclass(slots=True)
+class ValidationCostScenarioConfig:
+    name: str
+    fee_multiplier: float = 1.0
+    slippage_multiplier: float = 1.0
+
+
+@dataclass(slots=True)
+class ValidationDecisionConfig:
+    min_total_test_trades: int = 10
+    min_positive_test_window_ratio_go: float = 0.60
+    min_positive_test_window_ratio_caution: float = 0.33
+    min_positive_temporal_block_ratio_go: float = 0.60
+    min_positive_temporal_block_ratio_caution: float = 0.33
+    min_aggregated_test_total_return_go: float = 0.0
+    min_aggregated_test_total_return_caution: float = -0.01
+    max_test_drawdown_go: float = 0.05
+    max_test_drawdown_caution: float = 0.10
+    min_test_sharpe_go: float = 0.0
+    min_test_sharpe_caution: float = -0.50
+    max_monte_carlo_drawdown_p95_go: float = 0.05
+    max_monte_carlo_drawdown_p95_caution: float = 0.10
+    min_cost_survival_ratio_go: float = 0.50
+    min_cost_survival_ratio_caution: float = 0.15
+
+
+@dataclass(slots=True)
 class ValidationConfig:
     walk_forward_splits: int = 4
+    walk_forward_train_ratio: float = 0.60
+    walk_forward_validation_ratio: float = 0.20
+    walk_forward_test_ratio: float = 0.20
+    temporal_block_frequency: str = "monthly"
+    monte_carlo_simulations: int = 500
+    monte_carlo_seed: int = 11
     min_trades: int = 50
     max_drawdown_limit: float = 0.08
     sharpe_floor: float = 1.0
+    cost_scenarios: list[ValidationCostScenarioConfig] = field(
+        default_factory=lambda: [
+            ValidationCostScenarioConfig(name="base", fee_multiplier=1.0, slippage_multiplier=1.0),
+            ValidationCostScenarioConfig(name="fees_x1_5", fee_multiplier=1.5, slippage_multiplier=1.0),
+            ValidationCostScenarioConfig(name="fees_x2", fee_multiplier=2.0, slippage_multiplier=1.0),
+            ValidationCostScenarioConfig(name="slippage_x1", fee_multiplier=1.0, slippage_multiplier=1.0),
+            ValidationCostScenarioConfig(name="slippage_x2", fee_multiplier=1.0, slippage_multiplier=2.0),
+            ValidationCostScenarioConfig(name="slippage_x3", fee_multiplier=1.0, slippage_multiplier=3.0),
+        ]
+    )
+    decision: ValidationDecisionConfig = field(default_factory=ValidationDecisionConfig)
 
 
 @dataclass(slots=True)
@@ -190,7 +255,7 @@ class Settings:
             backtest=BacktestConfig(**payload.get("backtest", {})),
             env=EnvConfig(**payload.get("env", {})),
             rl=RLConfig(**payload.get("rl", {})),
-            validation=ValidationConfig(**payload.get("validation", {})),
+            validation=_validation_config_from_dict(payload.get("validation", {})),
             paper=PaperConfig(**payload.get("paper", {})),
         )
 
@@ -228,6 +293,27 @@ def load_settings(config_dir: str | Path) -> Settings:
         merged = _deep_merge(merged, loaded)
 
     return Settings.from_dict(merged)
+
+
+def apply_settings_overrides(settings: Settings, overrides: dict[str, Any]) -> Settings:
+    payload = asdict(settings)
+    merged = _deep_merge(payload, overrides)
+    return Settings.from_dict(merged)
+
+
+def _validation_config_from_dict(payload: dict[str, Any]) -> ValidationConfig:
+    validation_payload = dict(payload or {})
+    raw_cost_scenarios = validation_payload.pop("cost_scenarios", None)
+    raw_decision = validation_payload.pop("decision", None)
+
+    validation = ValidationConfig(**validation_payload)
+    if raw_cost_scenarios is not None:
+        validation.cost_scenarios = [
+            ValidationCostScenarioConfig(**item) for item in raw_cost_scenarios
+        ]
+    if raw_decision is not None:
+        validation.decision = ValidationDecisionConfig(**raw_decision)
+    return validation
 
 
 def _deep_merge(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,46 @@
 validation:
-  walk_forward_splits: 4
+  walk_forward_splits: 3
+  walk_forward_train_ratio: 0.60
+  walk_forward_validation_ratio: 0.20
+  walk_forward_test_ratio: 0.20
+  temporal_block_frequency: monthly
+  monte_carlo_simulations: 500
+  monte_carlo_seed: 11
   min_trades: 50
   max_drawdown_limit: 0.08
   sharpe_floor: 1.0
-
+  cost_scenarios:
+    - name: base
+      fee_multiplier: 1.0
+      slippage_multiplier: 1.0
+    - name: fees_x1_5
+      fee_multiplier: 1.5
+      slippage_multiplier: 1.0
+    - name: fees_x2
+      fee_multiplier: 2.0
+      slippage_multiplier: 1.0
+    - name: slippage_x1
+      fee_multiplier: 1.0
+      slippage_multiplier: 1.0
+    - name: slippage_x2
+      fee_multiplier: 1.0
+      slippage_multiplier: 2.0
+    - name: slippage_x3
+      fee_multiplier: 1.0
+      slippage_multiplier: 3.0
+  decision:
+    min_total_test_trades: 10
+    min_positive_test_window_ratio_go: 0.60
+    min_positive_test_window_ratio_caution: 0.33
+    min_positive_temporal_block_ratio_go: 0.60
+    min_positive_temporal_block_ratio_caution: 0.33
+    min_aggregated_test_total_return_go: 0.0
+    min_aggregated_test_total_return_caution: -0.01
+    max_test_drawdown_go: 0.05
+    max_test_drawdown_caution: 0.10
+    min_test_sharpe_go: 0.0
+    min_test_sharpe_caution: -0.50
+    max_monte_carlo_drawdown_p95_go: 0.05
+    max_monte_carlo_drawdown_p95_caution: 0.10
+    min_cost_survival_ratio_go: 0.50
+    min_cost_survival_ratio_caution: 0.15

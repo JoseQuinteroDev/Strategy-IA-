@@ -22,9 +22,10 @@ def _feature(timestamp: datetime, **values: float) -> FeatureSnapshot:
     return FeatureSnapshot(timestamp=timestamp, values=values, metadata={})
 
 
-def _strategy(**overrides: float | int | str) -> MeanReversionStrategy:
-    params: dict[str, float | int | str] = {
+def _strategy(**overrides: object) -> MeanReversionStrategy:
+    params: dict[str, object] = {
         "name": "mean_reversion_trend_regime",
+        "variant_name": "baseline_v1",
         "entry_zscore": 2.0,
         "exit_zscore": 0.5,
         "trend_filter": "ema_200_1h",
@@ -161,3 +162,93 @@ class MeanReversionStrategyTests(unittest.TestCase):
         self.assertTrue(signal.metadata["session_close_exit"])
         self.assertIn("Session close", signal.rationale)
 
+    def test_blocks_trade_in_blocked_hour_for_selective_variant(self) -> None:
+        timestamp = datetime(2024, 1, 2, 13, 0, tzinfo=UTC)
+        strategy = _strategy(
+            variant_name="baseline_v2",
+            blocked_hours_utc=[13],
+        )
+        signal = strategy.generate(
+            StrategyContext(
+                symbol="BTCUSDT",
+                execution_timeframe="5m",
+                filter_timeframe="1H",
+                bars=[_bar(timestamp, close=100.0)],
+                features=[
+                    _feature(
+                        timestamp,
+                        ema_200_1h=95.0,
+                        adx_1h=18.0,
+                        intraday_vwap=101.2,
+                        ema_50=100.9,
+                        atr_14=1.5,
+                        zscore_distance_to_mean=-2.4,
+                    )
+                ],
+            )
+        )
+
+        self.assertEqual(signal.side, SignalSide.FLAT)
+        self.assertTrue(signal.metadata["session_gate"])
+        self.assertIn("Blocked trading hour", signal.rationale)
+
+    def test_blocks_trade_on_weekend_when_weekends_are_disabled(self) -> None:
+        timestamp = datetime(2024, 1, 6, 12, 0, tzinfo=UTC)
+        strategy = _strategy(
+            variant_name="baseline_v2",
+            exclude_weekends=True,
+        )
+        signal = strategy.generate(
+            StrategyContext(
+                symbol="BTCUSDT",
+                execution_timeframe="5m",
+                filter_timeframe="1H",
+                bars=[_bar(timestamp, close=100.0)],
+                features=[
+                    _feature(
+                        timestamp,
+                        ema_200_1h=95.0,
+                        adx_1h=18.0,
+                        intraday_vwap=101.2,
+                        ema_50=100.9,
+                        atr_14=1.5,
+                        zscore_distance_to_mean=-2.4,
+                    )
+                ],
+            )
+        )
+
+        self.assertEqual(signal.side, SignalSide.FLAT)
+        self.assertTrue(signal.metadata["session_gate"])
+        self.assertIn("Weekend trading is disabled", signal.rationale)
+
+    def test_blocks_trade_when_target_to_cost_ratio_is_too_weak(self) -> None:
+        timestamp = datetime(2024, 1, 2, 12, 0, tzinfo=UTC)
+        strategy = _strategy(
+            variant_name="baseline_v2",
+            minimum_target_to_cost_ratio=3.0,
+            estimated_round_trip_cost_bps=100.0,
+        )
+        signal = strategy.generate(
+            StrategyContext(
+                symbol="BTCUSDT",
+                execution_timeframe="5m",
+                filter_timeframe="1H",
+                bars=[_bar(timestamp, close=100.0)],
+                features=[
+                    _feature(
+                        timestamp,
+                        ema_200_1h=95.0,
+                        adx_1h=18.0,
+                        intraday_vwap=101.2,
+                        ema_50=100.9,
+                        atr_14=0.5,
+                        zscore_distance_to_mean=-2.4,
+                    )
+                ],
+            )
+        )
+
+        self.assertEqual(signal.side, SignalSide.FLAT)
+        self.assertIn("target-to-cost ratio is too weak", signal.rationale)
+        self.assertLess(signal.metadata["target_to_cost_ratio"], 3.0)

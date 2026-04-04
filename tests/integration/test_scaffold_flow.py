@@ -48,6 +48,7 @@ class ScaffoldFlowTests(unittest.TestCase):
 
         strategy = MeanReversionStrategy(
             name="mean_reversion_trend_regime",
+            variant_name="baseline_v1",
             entry_zscore=2.0,
             exit_zscore=0.5,
             trend_filter="ema_200_1h",

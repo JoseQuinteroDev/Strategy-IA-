@@ -18,8 +18,14 @@ from . import sb3_compat
 
 class RLTrainer(ABC):
     @abstractmethod
-    def fit(self, environment: TradingEnvironment) -> TrainingArtifact:
-        """Train a policy against the provided environment."""
+    def fit(
+        self,
+        environment: TradingEnvironment,
+        *,
+        output_dir: str | Path | None = None,
+        seeds: Sequence[int] | None = None,
+    ) -> TrainingArtifact:
+        """Convenience API for ad hoc training against a single pre-built environment."""
 
 
 @dataclass(slots=True)
@@ -69,25 +75,27 @@ class PPOTrainer(RLTrainer):
     verbose: int = 1
     tensorboard_log_dir: str = "artifacts/rl/tensorboard"
 
-    def fit(self, environment: TradingEnvironment) -> TrainingArtifact:
-        if not self.enabled:
-            return TrainingArtifact(
-                algorithm=self.algorithm,
-                status="disabled",
-                metadata={
-                    "enabled": self.enabled,
-                    "total_timesteps": self.total_timesteps,
-                    "reason": "PPO trainer is configured but disabled in settings.",
-                    "environment": environment.__class__.__name__,
-                },
-            )
+    def fit(
+        self,
+        environment: TradingEnvironment,
+        *,
+        output_dir: str | Path | None = None,
+        seeds: Sequence[int] | None = None,
+    ) -> TrainingArtifact:
+        """Train against one attached environment using the same env for train and evaluation.
 
-        output_dir = Path(self.checkpoint_dir) / "adhoc-fit"
+        This is a lightweight convenience wrapper for smoke tests and local experimentation.
+        The reproducible multi-seed project workflow lives in `train()`, which receives explicit
+        train/eval factories and is the API used by `PPOTrainingRunner`.
+        """
+        if not self.enabled:
+            return self._disabled_artifact(environment_name=environment.__class__.__name__)
+
         artifact = self.train(
             train_env_factory=lambda: environment,
             eval_env_factory=lambda: environment,
-            output_dir=output_dir,
-            seeds=self.seeds[:1],
+            output_dir=output_dir or (Path(self.checkpoint_dir) / "adhoc-fit"),
+            seeds=seeds or self.seeds[:1],
         )
         return artifact
 
@@ -99,6 +107,10 @@ class PPOTrainer(RLTrainer):
         output_dir: str | Path,
         seeds: Sequence[int] | None = None,
     ) -> TrainingArtifact:
+        """Primary reproducible PPO API used by the project runner."""
+        if not self.enabled:
+            return self._disabled_artifact()
+
         sb3_compat.require_sb3()
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -115,24 +127,10 @@ class PPOTrainer(RLTrainer):
                 )
             )
 
-        payload = {
-            "algorithm": self.algorithm,
-            "enabled": self.enabled,
-            "total_timesteps": self.total_timesteps,
-            "seeds": selected_seeds,
-            "seed_artifacts": [artifact.to_dict() for artifact in seed_artifacts],
-        }
-        report_path = output_path / "training_artifact.json"
-        report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        return TrainingArtifact(
-            algorithm=self.algorithm,
-            status="trained",
-            metadata={
-                "output_dir": str(output_path),
-                "report_path": str(report_path),
-                "seeds": selected_seeds,
-                "seed_artifacts": [artifact.to_dict() for artifact in seed_artifacts],
-            },
+        return self._write_training_artifact(
+            output_path=output_path,
+            selected_seeds=selected_seeds,
+            seed_artifacts=seed_artifacts,
         )
 
     def load_model(self, model_path: str | Path, environment: TradingEnvironment | None = None):
@@ -178,32 +176,13 @@ class PPOTrainer(RLTrainer):
             device=self.device,
         )
 
-        callbacks = []
-        if self.checkpoint_freq > 0 and sb3_compat.CheckpointCallback is not None:
-            callbacks.append(
-                sb3_compat.CheckpointCallback(
-                    save_freq=self.checkpoint_freq,
-                    save_path=str(checkpoint_dir),
-                    name_prefix=f"ppo-seed-{seed}",
-                )
-            )
-        if eval_env is not None and self.eval_freq > 0 and sb3_compat.EvalCallback is not None:
-            callbacks.append(
-                sb3_compat.EvalCallback(
-                    eval_env,
-                    best_model_save_path=str(best_model_dir),
-                    log_path=str(eval_log_dir),
-                    eval_freq=self.eval_freq,
-                    deterministic=True,
-                    n_eval_episodes=self.n_eval_episodes,
-                )
-            )
-
-        callback = None
-        if len(callbacks) == 1:
-            callback = callbacks[0]
-        elif len(callbacks) > 1 and sb3_compat.CallbackList is not None:
-            callback = sb3_compat.CallbackList(callbacks)
+        callback = self._build_callbacks(
+            seed=seed,
+            checkpoint_dir=checkpoint_dir,
+            best_model_dir=best_model_dir,
+            eval_log_dir=eval_log_dir,
+            eval_env=eval_env,
+        )
 
         model.learn(total_timesteps=self.total_timesteps, callback=callback)
 
@@ -241,6 +220,83 @@ class PPOTrainer(RLTrainer):
         if last_model_zip.exists():
             return last_model_zip
         return last_model_path
+
+    def _disabled_artifact(self, environment_name: str | None = None) -> TrainingArtifact:
+        metadata = {
+            "enabled": self.enabled,
+            "total_timesteps": self.total_timesteps,
+            "reason": "PPO trainer is configured but disabled in settings.",
+        }
+        if environment_name is not None:
+            metadata["environment"] = environment_name
+        return TrainingArtifact(
+            algorithm=self.algorithm,
+            status="disabled",
+            metadata=metadata,
+        )
+
+    def _build_callbacks(
+        self,
+        *,
+        seed: int,
+        checkpoint_dir: Path,
+        best_model_dir: Path,
+        eval_log_dir: Path,
+        eval_env: TradingEnvironment | None,
+    ):
+        callbacks = []
+        if self.checkpoint_freq > 0 and sb3_compat.CheckpointCallback is not None:
+            callbacks.append(
+                sb3_compat.CheckpointCallback(
+                    save_freq=self.checkpoint_freq,
+                    save_path=str(checkpoint_dir),
+                    name_prefix=f"ppo-seed-{seed}",
+                )
+            )
+        if eval_env is not None and self.eval_freq > 0 and sb3_compat.EvalCallback is not None:
+            callbacks.append(
+                sb3_compat.EvalCallback(
+                    eval_env,
+                    best_model_save_path=str(best_model_dir),
+                    log_path=str(eval_log_dir),
+                    eval_freq=self.eval_freq,
+                    deterministic=True,
+                    n_eval_episodes=self.n_eval_episodes,
+                )
+            )
+
+        if len(callbacks) == 1:
+            return callbacks[0]
+        if len(callbacks) > 1 and sb3_compat.CallbackList is not None:
+            return sb3_compat.CallbackList(callbacks)
+        return None
+
+    def _write_training_artifact(
+        self,
+        *,
+        output_path: Path,
+        selected_seeds: Sequence[int],
+        seed_artifacts: Sequence[PPOSeedArtifact],
+    ) -> TrainingArtifact:
+        payload = {
+            "algorithm": self.algorithm,
+            "enabled": self.enabled,
+            "total_timesteps": self.total_timesteps,
+            "seeds": list(selected_seeds),
+            "seed_artifacts": [artifact.to_dict() for artifact in seed_artifacts],
+        }
+        report_path = output_path / "training_artifact.json"
+        report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return TrainingArtifact(
+            algorithm=self.algorithm,
+            status="trained",
+            metadata={
+                "output_dir": str(output_path),
+                "report_path": str(report_path),
+                "seeds": list(selected_seeds),
+                "seed_artifacts": [artifact.to_dict() for artifact in seed_artifacts],
+            },
+        )
 
     def _seed_everything(self, seed: int) -> None:
         random.seed(seed)

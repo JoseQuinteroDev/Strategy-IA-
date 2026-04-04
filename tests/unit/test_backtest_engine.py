@@ -329,3 +329,28 @@ class BaselineRunnerTests(unittest.TestCase):
 
             risk_log = artifacts.risk_log_path.read_text(encoding="utf-8")
             self.assertTrue(risk_log.strip())
+
+    def test_runner_supports_trend_nasdaq_variant_from_config(self) -> None:
+        config_dir = Path(__file__).resolve().parents[2] / "configs"
+        runner = BaselineRunner.from_config(config_dir, variant_name="baseline_trend_nasdaq")
+        self.assertEqual(runner.application.strategy.__class__.__name__, "TrendBreakoutStrategy")
+
+        session_index = pd.date_range("2024-01-02T13:30:00Z", periods=78 * 3, freq="5min", tz="UTC")
+        step = pd.Series(range(len(session_index)), dtype=float)
+        close = 17000.0 + (step * 0.8)
+        frame = pd.DataFrame(index=session_index)
+        frame["open"] = close - 0.4
+        frame["high"] = close + 1.6
+        frame["low"] = close - 1.0
+        frame["close"] = close
+        frame["volume"] = 200.0
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            artifacts = runner.run(output_dir=tmp_dir, input_frame=frame, allow_gaps=True)
+
+            report = json.loads(artifacts.report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["symbol"], "NQ")
+            self.assertTrue(artifacts.report_path.exists())
+            self.assertTrue(artifacts.summary_path.exists())
+            self.assertTrue(artifacts.signals_path.exists())
+            self.assertTrue(artifacts.trades_path.exists())

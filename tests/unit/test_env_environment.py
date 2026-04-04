@@ -98,6 +98,9 @@ class HybridTradingEnvironmentTests(unittest.TestCase):
         self.assertEqual(observation.shape, env.observation_space.shape)
         self.assertTrue(env.observation_space.contains(observation))
         self.assertIn("observation_keys", info)
+        self.assertEqual(info["observation_mode"], HybridTradingEnvironment.OBSERVATION_MODE)
+        self.assertEqual(info["state_context_bars"], 64)
+        self.assertEqual(info["reward_breakdown"]["reward"], 0.0)
         self.assertTrue(info["candidate_actionable"])
 
     def test_take_trade_action_drives_simulator_and_nonzero_reward(self) -> None:
@@ -124,6 +127,8 @@ class HybridTradingEnvironmentTests(unittest.TestCase):
         self.assertFalse(terminated)
         self.assertFalse(truncated)
         self.assertEqual(info["action_effect"], "trade_queued")
+        self.assertIn("reward_breakdown", info)
+        self.assertAlmostEqual(info["reward_breakdown"]["reward"], reward)
         self.assertIn("take_profit", info["trades_closed"])
 
     def test_close_early_action_flattens_open_position(self) -> None:
@@ -172,3 +177,12 @@ class HybridTradingEnvironmentTests(unittest.TestCase):
         self.assertEqual(info["action_effect"], "trade_blocked")
         self.assertEqual(info["trades_closed"], [])
         self.assertFalse(np.isclose(reward, 0.0))
+
+    def test_state_context_alias_remains_backward_compatible(self) -> None:
+        legacy_env = HybridTradingEnvironment(observation_window=32, max_steps=10, reward_mode="risk_adjusted")
+        canonical_env = HybridTradingEnvironment(state_context_bars=48, max_steps=10, reward_mode="risk_adjusted")
+
+        self.assertEqual(legacy_env.state_context_bars, 32)
+        self.assertEqual(legacy_env.observation_window, 32)
+        self.assertEqual(canonical_env.state_context_bars, 48)
+        self.assertEqual(canonical_env.observation_window, 48)

@@ -131,7 +131,7 @@ class PPOTrainingRunner:
     def _make_env_factory(self, episode: EpisodeData) -> Callable[[], HybridTradingEnvironment]:
         def _factory() -> HybridTradingEnvironment:
             environment = HybridTradingEnvironment(
-                observation_window=self.application.settings.env.observation_window,
+                state_context_bars=self.application.settings.env.effective_state_context_bars,
                 max_steps=self.application.settings.env.max_steps,
                 reward_mode=self.application.settings.env.reward_mode,
                 strategy=self.application.strategy,

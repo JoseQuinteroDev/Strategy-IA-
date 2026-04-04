@@ -10,7 +10,7 @@ from typing import Any, Sequence
 
 import pandas as pd
 
-from hybrid_quant.bootstrap import TradingApplication, build_application
+from hybrid_quant.bootstrap import TradingApplication, build_application_from_settings
 from hybrid_quant.core import (
     BacktestRequest,
     FeatureSnapshot,
@@ -32,6 +32,8 @@ from hybrid_quant.data import (
     ParquetDatasetStore,
 )
 from hybrid_quant.execution import PortfolioSimulator, is_within_session, signal_has_executable_levels
+
+from .variants import load_variant_settings
 
 
 @dataclass(slots=True)
@@ -55,9 +57,13 @@ class BaselineRunner:
     data_service: HistoricalDataIngestionService
 
     @classmethod
-    def from_config(cls, config_dir: str | Path) -> "BaselineRunner":
-        settings = load_settings(config_dir)
-        application = build_application(config_dir)
+    def from_config(cls, config_dir: str | Path, variant_name: str | None = None) -> "BaselineRunner":
+        settings = (
+            load_variant_settings(config_dir, variant_name)
+            if variant_name is not None
+            else load_settings(config_dir)
+        )
+        application = build_application_from_settings(settings)
         data_service = HistoricalDataIngestionService(
             downloader=BinanceHistoricalDownloader(
                 base_url=settings.data.historical_api_url,
@@ -661,6 +667,7 @@ class BaselineRunner:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the end-to-end baseline pipeline.")
     parser.add_argument("--config-dir", default="configs")
+    parser.add_argument("--variant")
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--output-dir")
@@ -673,13 +680,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    settings = load_settings(args.config_dir)
-    runner = BaselineRunner.from_config(args.config_dir)
+    settings = (
+        load_variant_settings(args.config_dir, args.variant)
+        if args.variant is not None
+        else load_settings(args.config_dir)
+    )
+    runner = BaselineRunner.from_config(args.config_dir, variant_name=args.variant)
     output_dir = Path(args.output_dir) if args.output_dir else Path(settings.storage.artifacts_dir) / "baseline"
 
     if args.input_path:
         frame = _read_input_frame(args.input_path)
-        artifacts = runner.run(output_dir=output_dir, input_frame=frame, allow_gaps=args.allow_gaps)
+        artifacts = runner.run(
+            output_dir=output_dir,
+            input_frame=frame,
+            allow_gaps=args.allow_gaps or settings.data.allow_gaps,
+        )
     else:
         start = _parse_datetime(args.start or settings.data.default_start)
         end = _resolve_end_datetime(args.end, settings, start)
