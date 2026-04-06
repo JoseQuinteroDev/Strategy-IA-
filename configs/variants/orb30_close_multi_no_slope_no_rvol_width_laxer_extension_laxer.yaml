@@ -1,0 +1,84 @@
+market:
+  symbol: NQ
+  venue: cme
+  execution_timeframe: 5m
+  filter_timeframe: 1H
+  style: intraday
+
+data:
+  provider: local_file
+  allow_gaps: true
+
+features:
+  enabled:
+    - atr_14
+    - ema_200_1h
+    - ema_200_1h_slope
+    - candle_range
+    - candle_range_pct
+    - candle_range_atr
+    - momentum_20
+    - relative_volume
+    - opening_range_high
+    - opening_range_low
+    - opening_range_width
+    - opening_range_width_atr
+    - opening_range_ready
+    - opening_range_long_breakout_entry
+    - opening_range_short_breakout_entry
+    - opening_range_long_retest_entry
+    - opening_range_short_retest_entry
+    - opening_range_breakout_count_today
+    - opening_range_first_breakout_of_day
+    - hour_utc
+    - day_of_week
+    - session_asia
+    - session_europe
+    - session_us
+  ema_slope_lookback_hours: 3
+  relative_volume_lookback_sessions: 20
+
+strategy:
+  family: opening_range_breakout
+  name: opening_range_breakout_nq
+  variant_name: orb30_close_multi_no_slope_no_rvol_width_laxer_extension_laxer
+  trend_filter: ema_200_1h
+  regime_filter: null
+  entry_mode: breakout_close_entry
+  opening_range_minutes: 30
+  retest_max_bars: 3
+  momentum_lookback_bars: 20
+  atr_multiple_stop: 1.0
+  atr_multiple_target: 2.0
+  time_stop_bars: 18
+  use_ema_200_1h_slope: false
+  session_close_hour_utc: 20
+  session_close_minute_utc: 55
+  no_entry_minutes_before_close: 20
+  allowed_weekdays:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+  exclude_weekends: true
+  minimum_expected_move_bps: 12.0
+  minimum_target_to_cost_ratio: 2.5
+  minimum_momentum_abs: 0.0025
+  minimum_candle_range_atr: 0.75
+  minimum_opening_range_width_atr: 0.30
+  maximum_opening_range_width_atr: 3.00
+  minimum_relative_volume: 0.0
+  max_breakout_distance_atr: 0.45
+  max_breakouts_per_day: 3
+
+risk:
+  session_start_hour_utc: 13
+  session_start_minute_utc: 30
+  session_end_hour_utc: 20
+  session_end_minute_utc: 55
+  max_trades_per_day: 3
+
+backtest:
+  fee_bps: 0.10
+  slippage_bps: 0.35

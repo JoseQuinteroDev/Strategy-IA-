@@ -1,0 +1,98 @@
+name: orb_focus_validation
+base_variant: orb30_close_multi_no_slope_no_rvol
+
+summary_thresholds:
+  minimum_trades_total: 24
+  minimum_trades_per_year: 8.0
+  max_drawdown: 0.08
+  minimum_positive_year_ratio: 0.50
+  minimum_positive_quarter_ratio: 0.35
+  maximum_year_net_pnl_concentration: 0.75
+
+variants:
+  - name: reference
+    label: Winner reference
+    candidate: true
+    overrides: {}
+
+  - name: width_tighter
+    label: Tighter OR width gate
+    candidate: true
+    overrides:
+      strategy:
+        minimum_opening_range_width_atr: 0.60
+        maximum_opening_range_width_atr: 2.20
+
+  - name: width_wider
+    label: Wider OR width gate
+    candidate: true
+    overrides:
+      strategy:
+        minimum_opening_range_width_atr: 0.40
+        maximum_opening_range_width_atr: 2.80
+
+  - name: extension_stricter
+    label: Stricter breakout extension cap
+    candidate: true
+    overrides:
+      strategy:
+        max_breakout_distance_atr: 0.25
+
+  - name: extension_laxer
+    label: Laxer breakout extension cap
+    candidate: true
+    overrides:
+      strategy:
+        max_breakout_distance_atr: 0.45
+
+  - name: trades_day_2
+    label: Max 2 trades per day
+    candidate: true
+    overrides:
+      strategy:
+        max_breakouts_per_day: 2
+      risk:
+        max_trades_per_day: 2
+
+  - name: trades_day_4
+    label: Max 4 trades per day
+    candidate: true
+    overrides:
+      strategy:
+        max_breakouts_per_day: 4
+      risk:
+        max_trades_per_day: 4
+
+  - name: stop_0p8
+    label: Stop ATR 0.8
+    candidate: true
+    overrides:
+      strategy:
+        atr_multiple_stop: 0.8
+
+  - name: target_2p5
+    label: Target ATR 2.5
+    candidate: true
+    overrides:
+      strategy:
+        atr_multiple_target: 2.5
+
+  - name: core_hours_14_17
+    label: Only 14-17 UTC
+    candidate: true
+    overrides:
+      strategy:
+        allowed_hours_utc:
+          - 14
+          - 15
+          - 16
+          - 17
+        blocked_hours_utc: []
+
+  - name: long_only_diagnostic
+    label: Long-only diagnostic
+    candidate: false
+    overrides:
+      strategy:
+        allowed_sides:
+          - long

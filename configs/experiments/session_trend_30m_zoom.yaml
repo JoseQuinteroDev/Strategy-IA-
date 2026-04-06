@@ -1,0 +1,316 @@
+name: session_trend_30m_zoom
+base_variant: session_trend_30m
+
+summary_thresholds:
+  minimum_trades_total: 40
+  minimum_trades_per_year: 12.0
+  minimum_profit_factor: 1.05
+  strong_profit_factor: 1.10
+  minimum_expectancy: 0.0
+  maximum_drawdown: 0.08
+  target_drawdown_min: 0.01
+  target_drawdown_max: 0.05
+  minimum_positive_year_ratio: 0.50
+  minimum_positive_quarter_ratio: 0.50
+  maximum_year_net_pnl_concentration: 0.75
+
+variants:
+  - name: active_orb_reclaim_30m_control
+    label: Active ORB reclaim 30m control
+    candidate: false
+    source_variant: baseline_nq_intraday_orb_active
+    tags:
+      profile: control
+      focus_group: control
+    overrides:
+      strategy:
+        entry_mode: reclaim_acceptance
+        opening_range_minutes: 30
+
+  - name: context_reclaim_15m_control
+    label: Context reclaim 15m control
+    candidate: false
+    source_variant: baseline_nq_intraday_contextual
+    tags:
+      profile: control
+      focus_group: control
+    overrides:
+      strategy:
+        entry_mode: vwap_reclaim_acceptance
+        opening_range_minutes: 15
+
+  - name: reference
+    label: Session trend 30m reference
+    candidate: true
+    tags:
+      profile: baseline
+      focus_group: reference
+    overrides: {}
+
+  - name: no_slope
+    label: HTF without slope
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: htf
+    overrides:
+      strategy:
+        use_ema_200_1h_slope: false
+
+  - name: slope_lax
+    label: HTF slope laxer
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: htf
+    overrides:
+      strategy:
+        ema_200_1h_slope_tolerance: 5.0
+
+  - name: no_ema200_trend_filter
+    label: HTF without EMA200 price filter
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: htf
+    overrides:
+      strategy:
+        use_ema_200_1h_trend_filter: false
+
+  - name: no_vwap
+    label: Context without VWAP
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: context
+    overrides:
+      strategy:
+        use_intraday_vwap_filter: false
+        require_context_vwap_structure: false
+
+  - name: no_ema50_alignment
+    label: Context without EMA50 alignment
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: context
+    overrides:
+      strategy:
+        use_intraday_ema50_alignment: false
+
+  - name: no_or_mid
+    label: Context without OR midpoint
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: context
+    overrides:
+      strategy:
+        use_opening_range_mid_filter: false
+        require_context_or_mid_structure: false
+
+  - name: exclude_15_utc
+    label: Exclude 15 UTC
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: hours
+    overrides:
+      strategy:
+        allowed_hours_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19
+
+  - name: hours_14_17
+    label: Only 14 16 17 UTC
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: hours
+    overrides:
+      strategy:
+        allowed_hours_utc:
+          - 14
+          - 16
+          - 17
+
+  - name: extension_lax
+    label: Extension and momentum laxer
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: extension
+    overrides:
+      strategy:
+        minimum_momentum_abs: 0.0006
+        max_breakout_distance_atr: 0.95
+
+  - name: extension_off
+    label: Extension filter off
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: extension
+    overrides:
+      strategy:
+        minimum_momentum_abs: 0.0004
+        max_breakout_distance_atr: 0.0
+
+  - name: no_vwap_structure
+    label: No VWAP structure confirmation
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: acceptance
+    overrides:
+      strategy:
+        require_context_vwap_structure: false
+
+  - name: no_compression_cap
+    label: No compression cap
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: acceptance
+    overrides:
+      strategy:
+        maximum_context_compression_width_atr: 0.0
+
+  - name: trades_day_3
+    label: Cap 3 trades per day
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: trades_day
+    overrides:
+      strategy:
+        max_breakouts_per_day: 3
+      risk:
+        max_trades_per_day: 3
+
+  - name: trades_day_5
+    label: Cap 5 trades per day
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: trades_day
+    overrides:
+      strategy:
+        max_breakouts_per_day: 5
+      risk:
+        max_trades_per_day: 5
+
+  - name: long_only_diag
+    label: Long-only diagnostic
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: side
+    overrides:
+      strategy:
+        allowed_sides:
+          - long
+
+  - name: short_only_diag
+    label: Short-only diagnostic
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: side
+    overrides:
+      strategy:
+        allowed_sides:
+          - short
+
+  - name: shorts_strict_clean_hours
+    label: Both sides with stricter shorts
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: side
+    overrides:
+      strategy:
+        allowed_hours_short_utc:
+          - 14
+          - 16
+          - 18
+          - 19
+
+  - name: no_slope_exclude_15
+    label: No slope plus clean hours
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        use_ema_200_1h_slope: false
+        allowed_hours_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19
+
+  - name: no_vwap_extension_lax
+    label: No VWAP plus extension lax
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        use_intraday_vwap_filter: false
+        require_context_vwap_structure: false
+        minimum_momentum_abs: 0.0006
+        max_breakout_distance_atr: 0.95
+
+  - name: htf_lax_trades_day_5
+    label: Lax HTF plus 5 trades day
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        use_ema_200_1h_slope: false
+        max_breakouts_per_day: 5
+      risk:
+        max_trades_per_day: 5
+
+  - name: long_only_clean_hours
+    label: Long-only clean hours
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        allowed_sides:
+          - long
+        allowed_hours_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19
+
+  - name: context_simplified_lax
+    label: Simplified context plus lax continuation
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        use_intraday_vwap_filter: false
+        require_context_vwap_structure: false
+        use_intraday_ema50_alignment: false
+        use_opening_range_mid_filter: false
+        require_context_or_mid_structure: false
+        maximum_context_compression_width_atr: 0.0
+        minimum_momentum_abs: 0.0006
+        max_breakout_distance_atr: 0.95

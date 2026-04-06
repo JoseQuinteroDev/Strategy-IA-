@@ -8,7 +8,7 @@ from .backtest import IntradayBacktestEngine
 from .core import Settings, load_settings
 from .data import InMemoryDataSource
 from .env import HybridTradingEnvironment
-from .features import FeaturePipeline
+from .features import DeterministicFeatureConfig, FeaturePipeline
 from .paper import PaperTradingRunner
 from .risk import PropFirmRiskEngine
 from .rl.trainer import PPOTrainer
@@ -57,11 +57,32 @@ def build_application_from_settings(settings: Settings) -> TradingApplication:
         execution_timeframe=settings.market.execution_timeframe,
         provider_name=settings.data.provider,
     )
+    deterministic_feature_config = DeterministicFeatureConfig(
+        breakout_window=settings.strategy.breakout_lookback_bars,
+        momentum_window=settings.strategy.momentum_lookback_bars,
+        ema_slope_lookback_hours=settings.features.ema_slope_lookback_hours,
+        relative_volume_lookback_sessions=settings.features.relative_volume_lookback_sessions,
+        opening_range_minutes=settings.strategy.opening_range_minutes,
+        opening_range_breakout_buffer_atr=settings.strategy.breakout_buffer_atr,
+        session_start_hour_utc=settings.risk.session_start_hour_utc,
+        session_start_minute_utc=settings.risk.session_start_minute_utc,
+        session_end_hour_utc=settings.risk.session_end_hour_utc,
+        session_end_minute_utc=settings.risk.session_end_minute_utc,
+        retest_max_bars=settings.strategy.retest_max_bars,
+        use_intraday_vwap_filter=settings.strategy.use_intraday_vwap_filter,
+        use_intraday_ema50_alignment=settings.strategy.use_intraday_ema50_alignment,
+        use_opening_range_mid_filter=settings.strategy.use_opening_range_mid_filter,
+        session_trend_structure_lookback_bars=settings.strategy.session_trend_structure_lookback_bars,
+        maximum_context_compression_width_atr=settings.strategy.maximum_context_compression_width_atr,
+        require_context_vwap_structure=settings.strategy.require_context_vwap_structure,
+        require_context_or_mid_structure=settings.strategy.require_context_or_mid_structure,
+    )
     feature_pipeline = FeaturePipeline(
         feature_names=settings.features.enabled,
         lookback_window=settings.features.lookback_window,
         regime_window=settings.features.regime_window,
         normalize=settings.features.normalize,
+        deterministic_config=deterministic_feature_config,
     )
     strategy = build_strategy(
         settings,

@@ -488,6 +488,34 @@ class BaselineRunner:
             "breakout_distance",
             "breakout_distance_atr",
             "breakout_range_width_atr",
+            "opening_range_high",
+            "opening_range_low",
+            "opening_range_mid",
+            "opening_range_width",
+            "opening_range_width_atr",
+            "opening_range_breakout_count_today",
+            "first_breakout_of_day",
+            "first_setup_of_day",
+            "intraday_setup_count_today",
+            "context_first_setup_of_day",
+            "context_setup_count_today",
+            "breakout_age_bars",
+            "acceptance_bars",
+            "pullback_depth_atr",
+            "reclaim_distance_atr",
+            "context_bias_side",
+            "context_support_level",
+            "context_trigger_level",
+            "context_support_distance_atr",
+            "context_trigger_distance_atr",
+            "context_session_range_width_atr",
+            "entry_mode",
+            "entry_trigger",
+            "ema_200_1h_slope",
+            "relative_volume",
+            "intraday_vwap",
+            "ema_20",
+            "ema_50",
             "momentum",
             "target_to_cost_ratio",
             "expected_move_bps",
@@ -707,6 +735,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.input_path:
         frame = _read_input_frame(args.input_path)
+        start = _parse_datetime(args.start) if args.start else None
+        end = _parse_datetime(args.end) if args.end else None
+        frame = _filter_frame_by_range(frame, start=start, end=end)
         artifacts = runner.run(
             output_dir=output_dir,
             input_frame=frame,
@@ -746,6 +777,29 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _read_input_frame(path: str | Path) -> pd.DataFrame:
     return read_ohlcv_frame(path)
+
+
+def _filter_frame_by_range(
+    frame: pd.DataFrame,
+    *,
+    start: datetime | None,
+    end: datetime | None,
+) -> pd.DataFrame:
+    if start is None and end is None:
+        return frame
+
+    if start is not None and end is not None and end < start:
+        raise ValueError("The end datetime must be greater than or equal to the start datetime.")
+
+    filtered = frame
+    if start is not None:
+        filtered = filtered.loc[filtered.index >= pd.Timestamp(start)]
+    if end is not None:
+        filtered = filtered.loc[filtered.index <= pd.Timestamp(end)]
+
+    if filtered.empty:
+        raise ValueError("The requested time range produced an empty OHLCV frame.")
+    return filtered
 
 
 def _parse_datetime(value: str) -> datetime:

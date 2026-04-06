@@ -248,6 +248,8 @@ class BaselineDiagnosticsRunnerTests(unittest.TestCase):
 
             self.assertTrue(artifacts.diagnostics_path.exists())
             self.assertTrue(artifacts.summary_path.exists())
+            self.assertTrue(artifacts.yearly_breakdown_path.exists())
+            self.assertTrue(artifacts.quarterly_breakdown_path.exists())
             self.assertTrue(artifacts.monthly_breakdown_path.exists())
             self.assertTrue(artifacts.hourly_breakdown_path.exists())
             self.assertTrue(artifacts.exit_reason_breakdown_path.exists())
@@ -255,9 +257,13 @@ class BaselineDiagnosticsRunnerTests(unittest.TestCase):
             self.assertTrue(artifacts.cost_impact_path.exists())
             self.assertTrue(artifacts.variant_comparison_path.exists())
             self.assertTrue(artifacts.risk_execution_breakdown_path.exists())
+            self.assertTrue(artifacts.yearly_equity_curve_path.exists())
 
             payload = json.loads(artifacts.diagnostics_path.read_text(encoding="utf-8"))
             self.assertIn("baseline_metrics", payload)
+            self.assertIn("profit_factor", payload["baseline_metrics"])
+            self.assertIn("yearly", payload["breakdowns"])
+            self.assertIn("quarterly", payload["breakdowns"])
             self.assertIn("automatic_conclusion", payload)
             self.assertIn("question_answer", payload)
             self.assertEqual(payload["baseline_metrics"]["number_of_trades"], 2)

@@ -1,0 +1,66 @@
+name: orb_intraday_active_research
+base_variant: baseline_nq_intraday_orb_active
+
+summary_thresholds:
+  minimum_profit_factor: 1.05
+  minimum_expectancy: 0.0
+  maximum_drawdown: 0.08
+  minimum_positive_year_ratio: 0.50
+  minimum_positive_quarter_ratio: 0.40
+  minimum_reasonable_trades_per_week_avg: 1.0
+  target_trades_per_week_avg: 2.0
+
+variants:
+  - name: legacy_orb_control
+    label: Legacy ORB control
+    candidate: false
+    source_variant: baseline_nq_orb
+    overrides: {}
+
+  - name: continuation_30m
+    label: Continuation 30m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: breakout_continuation
+        opening_range_minutes: 30
+
+  - name: pullback_30m
+    label: First pullback 30m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: first_pullback_after_breakout
+        opening_range_minutes: 30
+
+  - name: reclaim_30m
+    label: Reclaim 30m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: reclaim_acceptance
+        opening_range_minutes: 30
+
+  - name: continuation_15m
+    label: Continuation 15m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: breakout_continuation
+        opening_range_minutes: 15
+
+  - name: pullback_15m
+    label: First pullback 15m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: first_pullback_after_breakout
+        opening_range_minutes: 15
+
+  - name: reclaim_15m
+    label: Reclaim 15m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: reclaim_acceptance
+        opening_range_minutes: 15

@@ -29,7 +29,10 @@ class MeanReversionStrategy(Strategy, IntradayStrategySupport):
     no_entry_minutes_before_close: int = 30
     blocked_hours_utc: list[int] | None = None
     allowed_hours_utc: list[int] | None = None
+    allowed_hours_long_utc: list[int] | None = None
+    allowed_hours_short_utc: list[int] | None = None
     allowed_weekdays: list[int] | None = None
+    allowed_sides: list[str] | None = None
     exclude_weekends: bool = False
     minimum_anchor_distance_atr: float = 0.0
     minimum_expected_move_bps: float = 0.0
@@ -52,7 +55,10 @@ class MeanReversionStrategy(Strategy, IntradayStrategySupport):
             "regime": context.regime,
             "blocked_hours_utc": list(self.blocked_hours_utc or []),
             "allowed_hours_utc": list(self.allowed_hours_utc or []),
+            "allowed_hours_long_utc": list(self.allowed_hours_long_utc or []),
+            "allowed_hours_short_utc": list(self.allowed_hours_short_utc or []),
             "allowed_weekdays": list(self.allowed_weekdays or []),
+            "allowed_sides": list(self.allowed_sides or []),
             "exclude_weekends": self.exclude_weekends,
             "minimum_anchor_distance_atr": self.minimum_anchor_distance_atr,
             "minimum_expected_move_bps": self.minimum_expected_move_bps,
@@ -128,6 +134,15 @@ class MeanReversionStrategy(Strategy, IntradayStrategySupport):
                 timestamp=timestamp,
                 rationale="Trend filter is neutral because price is sitting on the 1H EMA200.",
                 metadata={**base_metadata, "ema_200_1h": ema_200_1h},
+            )
+
+        direction_gate_reason = self._direction_gate_reason(trend_bias)
+        if direction_gate_reason is not None:
+            return self._flat_signal(
+                symbol=context.symbol,
+                timestamp=timestamp,
+                rationale=direction_gate_reason,
+                metadata={**base_metadata, "ema_200_1h": ema_200_1h, "direction_gate": True},
             )
 
         if adx_1h > self.adx_threshold:

@@ -1,0 +1,67 @@
+name: intraday_nasdaq_contextual_research
+base_variant: baseline_nq_intraday_contextual
+
+summary_thresholds:
+  minimum_profit_factor: 1.05
+  minimum_expectancy: 0.0
+  maximum_drawdown: 0.08
+  minimum_positive_year_ratio: 0.50
+  minimum_positive_quarter_ratio: 0.40
+
+variants:
+  - name: active_orb_reclaim_30m_control
+    label: Active ORB reclaim 30m control
+    candidate: false
+    source_variant: baseline_nq_intraday_orb_active
+    overrides:
+      strategy:
+        entry_mode: reclaim_acceptance
+        opening_range_minutes: 30
+
+  - name: context_pullback_30m
+    label: Context pullback 30m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: context_pullback_continuation
+        opening_range_minutes: 30
+
+  - name: context_reclaim_30m
+    label: Context reclaim 30m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: vwap_reclaim_acceptance
+        opening_range_minutes: 30
+
+  - name: session_trend_30m
+    label: Session trend continuation 30m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: session_trend_continuation
+        opening_range_minutes: 30
+
+  - name: context_pullback_15m
+    label: Context pullback 15m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: context_pullback_continuation
+        opening_range_minutes: 15
+
+  - name: context_reclaim_15m
+    label: Context reclaim 15m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: vwap_reclaim_acceptance
+        opening_range_minutes: 15
+
+  - name: session_trend_15m
+    label: Session trend continuation 15m
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: session_trend_continuation
+        opening_range_minutes: 15

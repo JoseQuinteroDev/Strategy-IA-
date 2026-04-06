@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+import numpy as np
 import pandas as pd
 
 from hybrid_quant.bootstrap import TradingApplication, build_application
@@ -37,6 +38,8 @@ class BaselineDiagnosticsArtifacts:
     output_dir: Path
     diagnostics_path: Path
     summary_path: Path
+    yearly_breakdown_path: Path
+    quarterly_breakdown_path: Path
     monthly_breakdown_path: Path
     hourly_breakdown_path: Path
     exit_reason_breakdown_path: Path
@@ -44,6 +47,7 @@ class BaselineDiagnosticsArtifacts:
     cost_impact_path: Path
     variant_comparison_path: Path
     risk_execution_breakdown_path: Path
+    yearly_equity_curve_path: Path
     diagnostics: dict[str, Any]
 
 
@@ -112,13 +116,18 @@ class BaselineDiagnosticsRunner:
 
         artifact_set = self._load_artifact_set(artifact_path)
         enriched_trades = self._build_enriched_trade_frame(artifact_set)
+        yearly_breakdown = self._build_trade_breakdown(enriched_trades, "exit_year")
+        quarterly_breakdown = self._build_quarterly_breakdown(enriched_trades, artifact_set.baseline_replay)
         monthly_breakdown = self._build_monthly_breakdown(enriched_trades, artifact_set.baseline_replay)
         weekday_breakdown = self._build_trade_breakdown(enriched_trades, "signal_weekday")
         hourly_breakdown = self._build_trade_breakdown(enriched_trades, "signal_hour_utc")
         exit_reason_breakdown = self._build_trade_breakdown(enriched_trades, "exit_reason")
         side_breakdown = self._build_trade_breakdown(enriched_trades, "side")
+        entry_mode_breakdown = self._build_trade_breakdown(enriched_trades, "entry_mode")
+        entry_trigger_breakdown = self._build_trade_breakdown(enriched_trades, "entry_trigger")
         regime_breakdown = self._build_trade_breakdown(enriched_trades, "regime")
         duration_breakdown = self._build_duration_breakdown(enriched_trades)
+        first_breakout_breakdown = self._build_trade_breakdown(enriched_trades, "breakout_order_bucket")
         zscore_breakdown = self._build_bucket_breakdown(
             enriched_trades,
             column="abs_entry_zscore",
@@ -148,6 +157,13 @@ class BaselineDiagnosticsRunner:
             labels=["<=1.0 ATR", "1.0-1.5 ATR", "1.5-2.0 ATR", ">2.0 ATR"],
             bucket_name="breakout_range_bucket",
         )
+        opening_range_width_breakdown = self._build_bucket_breakdown(
+            enriched_trades,
+            column="opening_range_width_atr",
+            bins=[0.0, 0.5, 1.0, 1.5, math.inf],
+            labels=["<=0.5 ATR", "0.5-1.0 ATR", "1.0-1.5 ATR", ">1.5 ATR"],
+            bucket_name="opening_range_width_bucket",
+        )
         target_to_cost_breakdown = self._build_bucket_breakdown(
             enriched_trades,
             column="target_to_cost_ratio",
@@ -160,9 +176,11 @@ class BaselineDiagnosticsRunner:
         risk_execution_breakdown = self._build_risk_execution_breakdown(artifact_set, risk_replay)
         variant_frame = self._run_variant_suite(artifact_set) if include_variants else pd.DataFrame()
         cost_impact = self._build_cost_impact(enriched_trades, variant_frame)
+        yearly_equity_curve = self._build_yearly_equity_curve(artifact_set.baseline_replay)
         overall_metrics = self._build_overall_metrics(
             enriched_trades=enriched_trades,
             replay_result=artifact_set.baseline_replay,
+            yearly_breakdown=yearly_breakdown,
             monthly_breakdown=monthly_breakdown,
             cost_impact=cost_impact,
         )
@@ -183,18 +201,24 @@ class BaselineDiagnosticsRunner:
             "baseline_metrics": overall_metrics,
             "report_snapshot": artifact_set.report,
             "breakdowns": {
+                "yearly": yearly_breakdown.to_dict(orient="records"),
+                "quarterly": quarterly_breakdown.to_dict(orient="records"),
                 "monthly": monthly_breakdown.to_dict(orient="records"),
                 "weekday": weekday_breakdown.to_dict(orient="records"),
                 "hourly": hourly_breakdown.to_dict(orient="records"),
                 "exit_reason": exit_reason_breakdown.to_dict(orient="records"),
                 "side": side_breakdown.to_dict(orient="records"),
+                "entry_mode": entry_mode_breakdown.to_dict(orient="records"),
+                "entry_trigger": entry_trigger_breakdown.to_dict(orient="records"),
                 "regime": regime_breakdown.to_dict(orient="records"),
                 "duration": duration_breakdown.to_dict(orient="records"),
+                "first_breakout": first_breakout_breakdown.to_dict(orient="records"),
                 "zscore": zscore_breakdown.to_dict(orient="records"),
                 "stop_target": stop_target_breakdown.to_dict(orient="records"),
                 "breakout_distance": breakout_distance_breakdown.to_dict(orient="records"),
                 "momentum": momentum_breakdown.to_dict(orient="records"),
                 "breakout_range": breakout_range_breakdown.to_dict(orient="records"),
+                "opening_range_width": opening_range_width_breakdown.to_dict(orient="records"),
                 "target_to_cost": target_to_cost_breakdown.to_dict(orient="records"),
                 "signal_side": signal_side_breakdown.to_dict(orient="records"),
                 "risk_execution": risk_execution_breakdown.to_dict(orient="records"),
@@ -202,11 +226,14 @@ class BaselineDiagnosticsRunner:
             "risk_replay": risk_replay.to_dict() if risk_replay is not None else None,
             "variants": variant_frame.to_dict(orient="records"),
             "cost_impact": cost_impact.to_dict(orient="records"),
+            "yearly_equity_curve": yearly_equity_curve.to_dict(orient="records"),
             "automatic_conclusion": automatic_conclusion,
         }
 
         diagnostics_path = output_path / "diagnostics.json"
         summary_path = output_path / "diagnostics_summary.md"
+        yearly_breakdown_path = output_path / "yearly_breakdown.csv"
+        quarterly_breakdown_path = output_path / "quarterly_breakdown.csv"
         monthly_breakdown_path = output_path / "monthly_breakdown.csv"
         hourly_breakdown_path = output_path / "hourly_breakdown.csv"
         exit_reason_breakdown_path = output_path / "exit_reason_breakdown.csv"
@@ -214,12 +241,14 @@ class BaselineDiagnosticsRunner:
         cost_impact_path = output_path / "cost_impact.csv"
         variant_comparison_path = output_path / "variant_comparison.csv"
         risk_execution_breakdown_path = output_path / "risk_execution_breakdown.csv"
+        yearly_equity_curve_path = output_path / "yearly_equity_curve.csv"
 
         diagnostics_path.write_text(json.dumps(self._sanitize_value(diagnostics), indent=2), encoding="utf-8")
         summary_path.write_text(
             self._build_summary_markdown(
                 diagnostics=diagnostics,
                 overall_metrics=overall_metrics,
+                yearly_breakdown=yearly_breakdown,
                 monthly_breakdown=monthly_breakdown,
                 hourly_breakdown=hourly_breakdown,
                 variant_frame=variant_frame,
@@ -228,6 +257,8 @@ class BaselineDiagnosticsRunner:
             encoding="utf-8",
         )
 
+        yearly_breakdown.to_csv(yearly_breakdown_path, index=False)
+        quarterly_breakdown.to_csv(quarterly_breakdown_path, index=False)
         monthly_breakdown.to_csv(monthly_breakdown_path, index=False)
         hourly_breakdown.to_csv(hourly_breakdown_path, index=False)
         exit_reason_breakdown.to_csv(exit_reason_breakdown_path, index=False)
@@ -235,15 +266,20 @@ class BaselineDiagnosticsRunner:
         cost_impact.to_csv(cost_impact_path, index=False)
         variant_frame.to_csv(variant_comparison_path, index=False)
         risk_execution_breakdown.to_csv(risk_execution_breakdown_path, index=False)
+        yearly_equity_curve.to_csv(yearly_equity_curve_path, index=False)
         weekday_breakdown.to_csv(output_path / "weekday_breakdown.csv", index=False)
         regime_breakdown.to_csv(output_path / "regime_breakdown.csv", index=False)
         signal_side_breakdown.to_csv(output_path / "signal_side_breakdown.csv", index=False)
+        entry_mode_breakdown.to_csv(output_path / "entry_mode_breakdown.csv", index=False)
+        entry_trigger_breakdown.to_csv(output_path / "entry_trigger_breakdown.csv", index=False)
         duration_breakdown.to_csv(output_path / "duration_breakdown.csv", index=False)
+        first_breakout_breakdown.to_csv(output_path / "first_breakout_breakdown.csv", index=False)
         zscore_breakdown.to_csv(output_path / "zscore_breakdown.csv", index=False)
         stop_target_breakdown.to_csv(output_path / "stop_target_breakdown.csv", index=False)
         breakout_distance_breakdown.to_csv(output_path / "breakout_distance_breakdown.csv", index=False)
         momentum_breakdown.to_csv(output_path / "momentum_breakdown.csv", index=False)
         breakout_range_breakdown.to_csv(output_path / "breakout_range_breakdown.csv", index=False)
+        opening_range_width_breakdown.to_csv(output_path / "opening_range_width_breakdown.csv", index=False)
         target_to_cost_breakdown.to_csv(output_path / "target_to_cost_breakdown.csv", index=False)
         enriched_trades.to_csv(output_path / "enriched_trades.csv", index=False)
 
@@ -251,6 +287,8 @@ class BaselineDiagnosticsRunner:
             output_dir=output_path,
             diagnostics_path=diagnostics_path,
             summary_path=summary_path,
+            yearly_breakdown_path=yearly_breakdown_path,
+            quarterly_breakdown_path=quarterly_breakdown_path,
             monthly_breakdown_path=monthly_breakdown_path,
             hourly_breakdown_path=hourly_breakdown_path,
             exit_reason_breakdown_path=exit_reason_breakdown_path,
@@ -258,6 +296,7 @@ class BaselineDiagnosticsRunner:
             cost_impact_path=cost_impact_path,
             variant_comparison_path=variant_comparison_path,
             risk_execution_breakdown_path=risk_execution_breakdown_path,
+            yearly_equity_curve_path=yearly_equity_curve_path,
             diagnostics=diagnostics,
         )
 
@@ -265,7 +304,7 @@ class BaselineDiagnosticsRunner:
         report = json.loads((artifact_dir / "report.json").read_text(encoding="utf-8"))
         ohlcv_frame = self._read_indexed_frame(artifact_dir / "ohlcv.csv", "open_time")
         feature_frame = self._read_indexed_frame(artifact_dir / "features.csv", "open_time")
-        signal_frame = pd.read_csv(artifact_dir / "signals.csv", parse_dates=["timestamp"])
+        signal_frame = pd.read_csv(artifact_dir / "signals.csv", parse_dates=["timestamp"], low_memory=False)
         signal_frame["timestamp"] = pd.to_datetime(signal_frame["timestamp"], utc=True)
         trade_frame = pd.read_csv(
             artifact_dir / "trades.csv",
@@ -360,9 +399,9 @@ class BaselineDiagnosticsRunner:
         ohlcv_lookup = artifact_set.ohlcv_frame.copy()
         ohlcv_lookup.index = pd.to_datetime(ohlcv_lookup.index, utc=True)
 
-        joined_signals = signal_lookup.reindex(pd.DatetimeIndex(signal_times))
-        joined_features = feature_lookup.reindex(pd.DatetimeIndex(signal_times))
-        joined_prices = ohlcv_lookup.reindex(pd.DatetimeIndex(signal_times))
+        joined_signals = signal_lookup.reindex(pd.DatetimeIndex(signal_times)).reset_index(drop=True)
+        joined_features = feature_lookup.reindex(pd.DatetimeIndex(signal_times)).reset_index(drop=True)
+        joined_prices = ohlcv_lookup.reindex(pd.DatetimeIndex(signal_times)).reset_index(drop=True)
 
         anchor_column = self._anchor_column_name()
         breakout_window = settings.strategy.breakout_lookback_bars
@@ -371,7 +410,11 @@ class BaselineDiagnosticsRunner:
             2.0 * (settings.backtest.fee_bps + settings.backtest.slippage_bps)
         )
         trades["signal_time"] = pd.to_datetime(signal_times.values, utc=True)
-        trades["signal_side"] = joined_signals["raw_side"] if "raw_side" in joined_signals else joined_signals["side"]
+        trades["signal_side"] = (
+            joined_signals["raw_side"]
+            if "raw_side" in joined_signals.columns
+            else joined_signals["side"]
+        )
         trades["signal_entry_price"] = pd.to_numeric(joined_signals.get("entry_price"), errors="coerce")
         trades["signal_stop_price"] = pd.to_numeric(joined_signals.get("stop_price"), errors="coerce")
         trades["signal_target_price"] = pd.to_numeric(joined_signals.get("target_price"), errors="coerce")
@@ -383,14 +426,36 @@ class BaselineDiagnosticsRunner:
         trades["risk_reward_ratio"] = trades["target_distance"] / trades["stop_distance"]
         trades["strategy_family"] = (
             joined_signals.get("strategy_family")
-            if "strategy_family" in joined_signals
+            if "strategy_family" in joined_signals.columns
             else settings.strategy.family
         )
+        if not isinstance(trades["strategy_family"], pd.Series):
+            trades["strategy_family"] = pd.Series(settings.strategy.family, index=trades.index, dtype=object)
+        trades["strategy_family"] = trades["strategy_family"].fillna(settings.strategy.family)
         trades["signal_variant_name"] = (
             joined_signals.get("variant_name")
-            if "variant_name" in joined_signals
+            if "variant_name" in joined_signals.columns
             else settings.strategy.variant_name
         )
+        if not isinstance(trades["signal_variant_name"], pd.Series):
+            trades["signal_variant_name"] = pd.Series(settings.strategy.variant_name, index=trades.index, dtype=object)
+        trades["signal_variant_name"] = trades["signal_variant_name"].fillna(settings.strategy.variant_name)
+        trades["entry_mode"] = (
+            joined_signals.get("entry_mode")
+            if "entry_mode" in joined_signals.columns
+            else settings.strategy.entry_mode
+        )
+        if not isinstance(trades["entry_mode"], pd.Series):
+            trades["entry_mode"] = pd.Series(settings.strategy.entry_mode, index=trades.index, dtype=object)
+        trades["entry_mode"] = trades["entry_mode"].fillna(settings.strategy.entry_mode)
+        trades["entry_trigger"] = (
+            joined_signals.get("entry_trigger")
+            if "entry_trigger" in joined_signals.columns
+            else trades["entry_mode"]
+        )
+        if not isinstance(trades["entry_trigger"], pd.Series):
+            trades["entry_trigger"] = pd.Series(index=trades.index, dtype=object)
+        trades["entry_trigger"] = trades["entry_trigger"].fillna(trades["entry_mode"])
         trades["entry_zscore"] = pd.to_numeric(joined_features.get("zscore_distance_to_mean"), errors="coerce")
         trades["abs_entry_zscore"] = trades["entry_zscore"].abs()
         trades["adx_1h"] = pd.to_numeric(joined_features.get("adx_1h"), errors="coerce")
@@ -427,6 +492,35 @@ class BaselineDiagnosticsRunner:
             joined_features.get("price_vs_ema_200_1h_pct"),
             errors="coerce",
         )
+        trades["ema_200_1h_slope"] = pd.to_numeric(joined_features.get("ema_200_1h_slope"), errors="coerce")
+        trades["relative_volume"] = self._coalesce_numeric_series(
+            joined_signals, joined_features, "relative_volume"
+        )
+        trades["opening_range_high"] = self._coalesce_numeric_series(
+            joined_signals, joined_features, "opening_range_high"
+        )
+        trades["opening_range_low"] = self._coalesce_numeric_series(
+            joined_signals, joined_features, "opening_range_low"
+        )
+        trades["opening_range_width"] = self._coalesce_numeric_series(
+            joined_signals, joined_features, "opening_range_width"
+        )
+        trades["opening_range_width_atr"] = self._coalesce_numeric_series(
+            joined_signals, joined_features, "opening_range_width_atr"
+        )
+        trades["opening_range_breakout_count_today"] = self._coalesce_numeric_series(
+            joined_signals, joined_features, "opening_range_breakout_count_today"
+        )
+        trades["first_breakout_of_day"] = (
+            self._coalesce_numeric_series(
+                joined_signals,
+                joined_features,
+                "first_breakout_of_day",
+                secondary_column="opening_range_first_breakout_of_day",
+            )
+            .astype(float)
+            .fillna(0.0)
+        )
         trades["breakout_level"] = pd.to_numeric(joined_signals.get("breakout_level"), errors="coerce")
         missing_breakout_level = trades["breakout_level"].isna()
         long_mask = trades["candidate_signal_side"].astype(str).str.lower() == "long"
@@ -438,6 +532,24 @@ class BaselineDiagnosticsRunner:
         trades.loc[missing_breakout_level & short_mask, "breakout_level"] = trades.loc[
             missing_breakout_level & short_mask,
             "breakout_low",
+        ]
+        missing_breakout_level = trades["breakout_level"].isna()
+        trades.loc[missing_breakout_level & long_mask, "breakout_level"] = trades.loc[
+            missing_breakout_level & long_mask,
+            "opening_range_high",
+        ]
+        trades.loc[missing_breakout_level & short_mask, "breakout_level"] = trades.loc[
+            missing_breakout_level & short_mask,
+            "opening_range_low",
+        ]
+        missing_breakout_range = trades["breakout_range_width_atr"].isna()
+        trades.loc[missing_breakout_range, "breakout_range_width_atr"] = trades.loc[
+            missing_breakout_range,
+            "opening_range_width_atr",
+        ]
+        trades.loc[trades["breakout_range_width"].isna(), "breakout_range_width"] = trades.loc[
+            trades["breakout_range_width"].isna(),
+            "opening_range_width",
         ]
         trades["breakout_distance"] = float("nan")
         trades.loc[long_mask, "breakout_distance"] = (
@@ -464,8 +576,34 @@ class BaselineDiagnosticsRunner:
         trades["entry_hour_utc"] = trades["entry_timestamp"].dt.hour
         trades["signal_weekday"] = trades["signal_time"].dt.day_name()
         trades["entry_weekday"] = trades["entry_timestamp"].dt.day_name()
+        trades["signal_year"] = trades["signal_time"].dt.strftime("%Y")
+        trades["entry_year"] = trades["entry_timestamp"].dt.strftime("%Y")
+        trades["exit_year"] = trades["exit_timestamp"].dt.strftime("%Y")
+        trades["signal_quarter"] = (
+            trades["signal_time"].dt.year.astype(str) + "-Q" + trades["signal_time"].dt.quarter.astype(str)
+        )
+        trades["exit_quarter"] = (
+            trades["exit_timestamp"].dt.year.astype(str) + "-Q" + trades["exit_timestamp"].dt.quarter.astype(str)
+        )
         trades["exit_month"] = trades["exit_timestamp"].dt.strftime("%Y-%m")
         trades["regime"] = trades["adx_1h"].apply(self._regime_label)
+        trades["breakout_order_bucket"] = trades["first_breakout_of_day"].apply(
+            lambda value: "first_breakout" if float(value) >= 1.0 else "later_breakout"
+        )
+        mfe_mae = trades.apply(
+            lambda row: self._calculate_mfe_mae(
+                ohlcv_lookup=ohlcv_lookup,
+                entry_timestamp=row["entry_timestamp"],
+                exit_timestamp=row["exit_timestamp"],
+                side=str(row["side"]),
+                entry_price=float(row["entry_price"]),
+                atr=float(row["atr_14"]) if pd.notna(row["atr_14"]) else None,
+            ),
+            axis=1,
+            result_type="expand",
+        )
+        mfe_mae.columns = ["mfe", "mae", "mfe_atr", "mae_atr"]
+        trades = pd.concat([trades, mfe_mae], axis=1)
         return trades
 
     def _build_overall_metrics(
@@ -473,32 +611,52 @@ class BaselineDiagnosticsRunner:
         *,
         enriched_trades: pd.DataFrame,
         replay_result: BacktestResult,
+        yearly_breakdown: pd.DataFrame,
         monthly_breakdown: pd.DataFrame,
         cost_impact: pd.DataFrame,
     ) -> dict[str, Any]:
         wins = enriched_trades.loc[enriched_trades["net_pnl"] > 0.0, "net_pnl"]
         losses = enriched_trades.loc[enriched_trades["net_pnl"] <= 0.0, "net_pnl"]
+        gross_profit = float(wins.sum()) if not wins.empty else 0.0
+        gross_loss = abs(float(losses.sum())) if not losses.empty else 0.0
         average_win = float(wins.mean()) if not wins.empty else 0.0
         average_loss = float(losses.mean()) if not losses.empty else 0.0
         payoff_real = average_win / abs(average_loss) if average_loss < 0.0 else 0.0
+        profit_factor = gross_profit / gross_loss if gross_loss > 0.0 else 0.0
         expectancy = float(enriched_trades["net_pnl"].mean()) if not enriched_trades.empty else 0.0
         profitable_months_pct = (
             float((monthly_breakdown["net_pnl"] > 0.0).mean()) if not monthly_breakdown.empty else 0.0
         )
+        profitable_years_pct = (
+            float((yearly_breakdown["net_pnl"] > 0.0).mean()) if not yearly_breakdown.empty else 0.0
+        )
         break_even_win_rate = 1.0 / (1.0 + payoff_real) if payoff_real > 0.0 else 1.0
         variant_lookup = cost_impact.set_index("variant") if not cost_impact.empty else pd.DataFrame()
+        period_days = 0.0
+        if replay_result.start is not None and replay_result.end is not None:
+            period_days = max(
+                (pd.Timestamp(replay_result.end) - pd.Timestamp(replay_result.start)).total_seconds() / 86_400.0,
+                0.0,
+            )
+        period_years = period_days / 365.25 if period_days > 0.0 else 0.0
+        period_weeks = period_days / 7.0 if period_days > 0.0 else 0.0
 
         return {
             "strategy_family": self.application.settings.strategy.family,
             "variant_name": self.application.settings.strategy.variant_name,
             "bars": int(replay_result.metadata.get("bars", 0)),
+            "analysis_period_days": period_days,
+            "analysis_period_years": period_years,
             "number_of_trades": int(replay_result.trades),
+            "trades_per_year": (float(replay_result.trades) / period_years) if period_years > 0.0 else 0.0,
+            "trades_per_week_avg": (float(replay_result.trades) / period_weeks) if period_weeks > 0.0 else 0.0,
             "gross_pnl": float(enriched_trades["gross_pnl"].sum()),
             "net_pnl": float(enriched_trades["net_pnl"].sum()),
             "fees_paid_total": float(enriched_trades["fees_paid"].sum()),
             "average_win": average_win,
             "average_loss": average_loss,
             "payoff_real": payoff_real,
+            "profit_factor": profit_factor,
             "expectancy": expectancy,
             "win_rate": float(replay_result.win_rate),
             "break_even_win_rate": break_even_win_rate,
@@ -509,7 +667,18 @@ class BaselineDiagnosticsRunner:
             "calmar": float(replay_result.calmar),
             "max_consecutive_losses": self._max_consecutive_losses(enriched_trades["net_pnl"].tolist()),
             "average_holding_bars": float(enriched_trades["bars_held"].mean()) if not enriched_trades.empty else 0.0,
-            "profitable_months_pct": profitable_months_pct,
+            "average_mfe_atr": (
+                float(enriched_trades["mfe_atr"].dropna().mean())
+                if "mfe_atr" in enriched_trades and not enriched_trades["mfe_atr"].dropna().empty
+                else 0.0
+            ),
+              "average_mae_atr": (
+                  float(enriched_trades["mae_atr"].dropna().mean())
+                  if "mae_atr" in enriched_trades and not enriched_trades["mae_atr"].dropna().empty
+                  else 0.0
+              ),
+              "profitable_years_pct": profitable_years_pct,
+              "profitable_months_pct": profitable_months_pct,
             "estimated_fee_drag": self._variant_delta(variant_lookup, "no_fees"),
             "estimated_slippage_drag": self._variant_delta(variant_lookup, "no_slippage"),
             "estimated_total_cost_drag": self._variant_delta(variant_lookup, "no_costs"),
@@ -545,6 +714,69 @@ class BaselineDiagnosticsRunner:
         monthly["profitable_month"] = monthly["net_pnl"] > 0.0
         return monthly.sort_values("exit_month").reset_index(drop=True)
 
+    def _build_quarterly_breakdown(self, enriched_trades: pd.DataFrame, replay_result: BacktestResult) -> pd.DataFrame:
+        quarterly = self._build_trade_breakdown(enriched_trades, "exit_quarter")
+        if quarterly.empty:
+            return quarterly
+
+        equity_curve = pd.DataFrame(replay_result.metadata.get("equity_curve", []))
+        if not equity_curve.empty:
+            equity_curve["timestamp"] = pd.to_datetime(equity_curve["timestamp"], utc=True)
+            equity_curve["quarter"] = (
+                equity_curve["timestamp"].dt.year.astype(str)
+                + "-Q"
+                + equity_curve["timestamp"].dt.quarter.astype(str)
+            )
+            quarter_dd = equity_curve.groupby("quarter", observed=False).agg(
+                quarter_drawdown=("equity", lambda series: abs((series / series.cummax() - 1.0).min()))
+            ).reset_index()
+            quarter_return = (
+                equity_curve.groupby("quarter", observed=False)["equity"]
+                .agg(quarter_start_equity="first", quarter_end_equity="last")
+                .reset_index()
+            )
+            quarter_return["quarter_return"] = (
+                quarter_return["quarter_end_equity"] / quarter_return["quarter_start_equity"] - 1.0
+            )
+            quarterly = quarterly.merge(quarter_dd, left_on="exit_quarter", right_on="quarter", how="left").drop(
+                columns=["quarter"]
+            )
+            quarterly = quarterly.merge(
+                quarter_return,
+                left_on="exit_quarter",
+                right_on="quarter",
+                how="left",
+            ).drop(columns=["quarter"])
+
+        quarterly["profitable_quarter"] = quarterly["net_pnl"] > 0.0
+        return quarterly.sort_values("exit_quarter").reset_index(drop=True)
+
+    def _build_yearly_equity_curve(self, replay_result: BacktestResult) -> pd.DataFrame:
+        equity_curve = pd.DataFrame(replay_result.metadata.get("equity_curve", []))
+        if equity_curve.empty:
+            return pd.DataFrame(
+                columns=[
+                    "timestamp",
+                    "year",
+                    "equity",
+                    "year_start_equity",
+                    "normalized_equity",
+                    "year_drawdown",
+                ]
+            )
+
+        equity_curve["timestamp"] = pd.to_datetime(equity_curve["timestamp"], utc=True)
+        equity_curve = equity_curve.sort_values("timestamp").reset_index(drop=True)
+        equity_curve["year"] = equity_curve["timestamp"].dt.strftime("%Y")
+        equity_curve["year_start_equity"] = equity_curve.groupby("year", observed=False)["equity"].transform("first")
+        equity_curve["normalized_equity"] = equity_curve["equity"] / equity_curve["year_start_equity"]
+        equity_curve["year_drawdown"] = equity_curve.groupby("year", observed=False)["equity"].transform(
+            lambda series: abs(series / series.cummax() - 1.0)
+        )
+        return equity_curve[
+            ["timestamp", "year", "equity", "year_start_equity", "normalized_equity", "year_drawdown"]
+        ]
+
     def _build_trade_breakdown(self, enriched_trades: pd.DataFrame, column: str) -> pd.DataFrame:
         if enriched_trades.empty or column not in enriched_trades.columns:
             return pd.DataFrame(
@@ -557,8 +789,11 @@ class BaselineDiagnosticsRunner:
                     "average_win",
                     "average_loss",
                     "payoff_real",
+                    "profit_factor",
                     "expectancy",
                     "average_holding_bars",
+                    "average_mfe_atr",
+                    "average_mae_atr",
                     "fees_paid",
                 ]
             )
@@ -568,6 +803,8 @@ class BaselineDiagnosticsRunner:
         for value, frame in grouped:
             wins = frame.loc[frame["net_pnl"] > 0.0, "net_pnl"]
             losses = frame.loc[frame["net_pnl"] <= 0.0, "net_pnl"]
+            gross_profit = float(wins.sum()) if not wins.empty else 0.0
+            gross_loss = abs(float(losses.sum())) if not losses.empty else 0.0
             average_win = float(wins.mean()) if not wins.empty else 0.0
             average_loss = float(losses.mean()) if not losses.empty else 0.0
             payoff_real = average_win / abs(average_loss) if average_loss < 0.0 else 0.0
@@ -581,8 +818,15 @@ class BaselineDiagnosticsRunner:
                     "average_win": average_win,
                     "average_loss": average_loss,
                     "payoff_real": payoff_real,
+                    "profit_factor": (gross_profit / gross_loss) if gross_loss > 0.0 else 0.0,
                     "expectancy": float(frame["net_pnl"].mean()) if not frame.empty else 0.0,
                     "average_holding_bars": float(frame["bars_held"].mean()) if not frame.empty else 0.0,
+                    "average_mfe_atr": (
+                        float(frame["mfe_atr"].dropna().mean()) if "mfe_atr" in frame and not frame["mfe_atr"].dropna().empty else 0.0
+                    ),
+                    "average_mae_atr": (
+                        float(frame["mae_atr"].dropna().mean()) if "mae_atr" in frame and not frame["mae_atr"].dropna().empty else 0.0
+                    ),
                     "fees_paid": float(frame["fees_paid"].sum()),
                 }
             )
@@ -600,7 +844,7 @@ class BaselineDiagnosticsRunner:
             }
             result["_order"] = result[column].map(weekday_order).fillna(999)
             result = result.sort_values("_order").drop(columns=["_order"])
-        elif column in {"signal_hour_utc", "exit_month"}:
+        elif column in {"signal_hour_utc", "exit_month", "exit_quarter", "exit_year"}:
             result = result.sort_values(column)
         else:
             result = result.sort_values("net_pnl")
@@ -636,7 +880,33 @@ class BaselineDiagnosticsRunner:
             labels=labels,
             include_lowest=True,
         )
-        return self._build_trade_breakdown(frame, bucket_name)
+        valid = frame.loc[frame[bucket_name].notna()].copy()
+        if valid.empty:
+            return self._empty_bucket_breakdown(bucket_name, labels)
+        return self._build_trade_breakdown(valid, bucket_name)
+
+    def _empty_bucket_breakdown(self, bucket_name: str, labels: Sequence[str]) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        for label in labels:
+            rows.append(
+                {
+                    bucket_name: label,
+                    "trades": 0,
+                    "gross_pnl": 0.0,
+                    "net_pnl": 0.0,
+                    "win_rate": 0.0,
+                    "average_win": 0.0,
+                    "average_loss": 0.0,
+                    "payoff_real": 0.0,
+                    "profit_factor": 0.0,
+                    "expectancy": 0.0,
+                    "average_holding_bars": 0.0,
+                    "average_mfe_atr": 0.0,
+                    "average_mae_atr": 0.0,
+                    "fees_paid": 0.0,
+                }
+            )
+        return pd.DataFrame(rows)
 
     def _build_stop_target_breakdown(self, enriched_trades: pd.DataFrame) -> pd.DataFrame:
         if enriched_trades.empty:
@@ -936,10 +1206,10 @@ class BaselineDiagnosticsRunner:
                     f"`{int(stop_loss_row.iloc[0]['trades'])}` stop exits versus "
                     f"`{int(take_profit_row.iloc[0]['trades'])}` take-profit exits."
                 )
-        if family == "trend_breakout" and len(top_causes) < 3 and not enriched_trades.empty:
-            median_breakout_distance = float(enriched_trades["breakout_distance_atr"].median())
-            median_target_to_cost = float(enriched_trades["target_to_cost_ratio"].median())
-            median_momentum = float(enriched_trades["abs_momentum"].median())
+        if family in {"trend_breakout", "opening_range_breakout"} and len(top_causes) < 3 and not enriched_trades.empty:
+            median_breakout_distance = self._safe_series_median(enriched_trades.get("breakout_distance_atr"))
+            median_target_to_cost = self._safe_series_median(enriched_trades.get("target_to_cost_ratio"))
+            median_momentum = self._safe_series_median(enriched_trades.get("abs_momentum"))
             if math.isfinite(median_target_to_cost) and median_target_to_cost < 2.0:
                 top_causes.append(
                     "Breakouts look too small versus execution friction: the median target-to-cost ratio is only "
@@ -985,8 +1255,8 @@ class BaselineDiagnosticsRunner:
             promising_parts.append(
                 f"The realized payoff is respectable at `{overall_metrics['payoff_real']:.2f}`."
             )
-        if family == "trend_breakout" and not enriched_trades.empty:
-            median_breakout_range = float(enriched_trades["breakout_range_width_atr"].median())
+        if family in {"trend_breakout", "opening_range_breakout"} and not enriched_trades.empty:
+            median_breakout_range = self._safe_series_median(enriched_trades.get("breakout_range_width_atr"))
             if math.isfinite(median_breakout_range):
                 promising_parts.append(
                     f"Executed breakouts are not trivially tiny: median prior range width is `{median_breakout_range:.2f} ATR`."
@@ -1007,8 +1277,8 @@ class BaselineDiagnosticsRunner:
             )
         if hourly_loss_share > 0.30 and toxic_hours:
             weak_parts.append(f"Losses are concentrated in specific hours: `{', '.join(toxic_hours)}` UTC.")
-        if family == "trend_breakout" and not enriched_trades.empty:
-            median_target_to_cost = float(enriched_trades["target_to_cost_ratio"].median())
+        if family in {"trend_breakout", "opening_range_breakout"} and not enriched_trades.empty:
+            median_target_to_cost = self._safe_series_median(enriched_trades.get("target_to_cost_ratio"))
             if math.isfinite(median_target_to_cost) and median_target_to_cost < 2.5:
                 weak_parts.append(
                     f"The median target-to-cost ratio is only `{median_target_to_cost:.2f}x`, which leaves little room for execution noise."
@@ -1028,7 +1298,7 @@ class BaselineDiagnosticsRunner:
             "Use this diagnostic evidence to decide whether the current breakout family deserves robust temporal validation.",
             "If it does not, the next experiment should be a very small refinement around hours or setup quality, not RL.",
         ]
-        if family == "trend_breakout":
+        if family in {"trend_breakout", "opening_range_breakout"}:
             next_changes.insert(
                 0,
                 "Check whether removing the worst trading hours materially improves the economics before changing the strategy structure.",
@@ -1168,6 +1438,7 @@ class BaselineDiagnosticsRunner:
         *,
         diagnostics: dict[str, Any],
         overall_metrics: dict[str, Any],
+        yearly_breakdown: pd.DataFrame,
         monthly_breakdown: pd.DataFrame,
         hourly_breakdown: pd.DataFrame,
         variant_frame: pd.DataFrame,
@@ -1176,6 +1447,7 @@ class BaselineDiagnosticsRunner:
         return self._build_family_aware_summary_markdown(
             diagnostics=diagnostics,
             overall_metrics=overall_metrics,
+            yearly_breakdown=yearly_breakdown,
             monthly_breakdown=monthly_breakdown,
             hourly_breakdown=hourly_breakdown,
             variant_frame=variant_frame,
@@ -1187,6 +1459,7 @@ class BaselineDiagnosticsRunner:
         *,
         diagnostics: dict[str, Any],
         overall_metrics: dict[str, Any],
+        yearly_breakdown: pd.DataFrame,
         monthly_breakdown: pd.DataFrame,
         hourly_breakdown: pd.DataFrame,
         variant_frame: pd.DataFrame,
@@ -1210,6 +1483,8 @@ class BaselineDiagnosticsRunner:
             f"- Strategy family: `{overall_metrics['strategy_family']}`",
             f"- Variant: `{overall_metrics['variant_name']}`",
             f"- Trades: `{overall_metrics['number_of_trades']}`",
+            f"- Trades per year: `{overall_metrics['trades_per_year']:.2f}`",
+            f"- Trades per week avg: `{overall_metrics['trades_per_week_avg']:.2f}`",
             f"- Gross PnL: `{overall_metrics['gross_pnl']:.2f}`",
             f"- Net PnL: `{overall_metrics['net_pnl']:.2f}`",
             f"- Fees paid: `{overall_metrics['fees_paid_total']:.2f}`",
@@ -1220,6 +1495,7 @@ class BaselineDiagnosticsRunner:
             f"- Average win: `{overall_metrics['average_win']:.2f}`",
             f"- Average loss: `{overall_metrics['average_loss']:.2f}`",
             f"- Payoff real: `{overall_metrics['payoff_real']:.4f}`",
+            f"- Profit factor: `{overall_metrics['profit_factor']:.4f}`",
             f"- Expectancy: `{overall_metrics['expectancy']:.2f}`",
             f"- Break-even win rate: `{overall_metrics['break_even_win_rate'] * 100:.2f}%`",
             f"- Max drawdown: `{overall_metrics['max_drawdown']:.4f}`",
@@ -1228,6 +1504,9 @@ class BaselineDiagnosticsRunner:
             f"- Calmar: `{overall_metrics['calmar']:.4f}`",
             f"- Max consecutive losses: `{overall_metrics['max_consecutive_losses']}`",
             f"- Average holding bars: `{overall_metrics['average_holding_bars']:.2f}`",
+            f"- Average MFE (ATR): `{overall_metrics['average_mfe_atr']:.2f}`",
+            f"- Average MAE (ATR): `{overall_metrics['average_mae_atr']:.2f}`",
+            f"- Percent profitable years: `{overall_metrics['profitable_years_pct'] * 100:.2f}%`",
             f"- Percent profitable months: `{overall_metrics['profitable_months_pct'] * 100:.2f}%`",
             "",
             "## Top 3 Probable Causes",
@@ -1258,6 +1537,12 @@ class BaselineDiagnosticsRunner:
             lines.append(
                 f"- Worst month: `{month['exit_month']}` with net PnL `{month['net_pnl']:.2f}` and monthly drawdown `{month_drawdown:.4f}`."
             )
+        if not yearly_breakdown.empty:
+            rendered_years = ", ".join(
+                f"`{row['exit_year']}` ({row['net_pnl']:.2f}, PF {row['profit_factor']:.2f})"
+                for _, row in yearly_breakdown.iterrows()
+            )
+            lines.append(f"- Yearly results: {rendered_years}.")
         if not worst_hours.empty:
             rendered_hours = ", ".join(
                 f"`{int(row['signal_hour_utc']):02d}:00` ({row['net_pnl']:.2f})"
@@ -1461,6 +1746,68 @@ class BaselineDiagnosticsRunner:
         if variant_lookup.empty or variant_name not in variant_lookup.index:
             return None
         return float(variant_lookup.loc[variant_name, "delta_pnl_vs_baseline"])
+
+    def _coalesce_numeric_series(
+        self,
+        primary_frame: pd.DataFrame,
+        secondary_frame: pd.DataFrame,
+        primary_column: str,
+        *,
+        secondary_column: str | None = None,
+    ) -> pd.Series:
+        index = primary_frame.index
+        primary = primary_frame.get(primary_column)
+        if primary is None:
+            primary_series = pd.Series(np.nan, index=index, dtype=float)
+        else:
+            primary_series = pd.to_numeric(primary, errors="coerce").astype(float)
+
+        secondary_name = secondary_column or primary_column
+        secondary = secondary_frame.get(secondary_name)
+        if secondary is None:
+            secondary_series = pd.Series(np.nan, index=index, dtype=float)
+        else:
+            secondary_series = pd.to_numeric(secondary, errors="coerce").astype(float)
+        result = primary_series.copy()
+        missing = result.isna()
+        result.loc[missing] = secondary_series.loc[missing]
+        return result
+
+    def _safe_series_median(self, series: pd.Series | None) -> float:
+        if series is None:
+            return float("nan")
+        clean = pd.to_numeric(series, errors="coerce").dropna()
+        if clean.empty:
+            return float("nan")
+        return float(clean.median())
+
+    def _calculate_mfe_mae(
+        self,
+        *,
+        ohlcv_lookup: pd.DataFrame,
+        entry_timestamp: pd.Timestamp,
+        exit_timestamp: pd.Timestamp,
+        side: str,
+        entry_price: float,
+        atr: float | None,
+    ) -> tuple[float, float, float | None, float | None]:
+        path = ohlcv_lookup.loc[
+            (ohlcv_lookup.index >= pd.Timestamp(entry_timestamp))
+            & (ohlcv_lookup.index <= pd.Timestamp(exit_timestamp))
+        ]
+        if path.empty:
+            return 0.0, 0.0, None, None
+
+        if side == "long":
+            mfe = float(max(0.0, path["high"].max() - entry_price))
+            mae = float(max(0.0, entry_price - path["low"].min()))
+        else:
+            mfe = float(max(0.0, entry_price - path["low"].min()))
+            mae = float(max(0.0, path["high"].max() - entry_price))
+
+        if atr is None or not math.isfinite(float(atr)) or atr <= 0.0:
+            return mfe, mae, None, None
+        return mfe, mae, mfe / atr, mae / atr
 
     def _parse_optional_float(self, value: Any) -> float | None:
         if value is None or value == "" or pd.isna(value):

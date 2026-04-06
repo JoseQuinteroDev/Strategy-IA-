@@ -1,0 +1,111 @@
+name: orb_frequency_expansion
+base_variant: orb30_close_multi_no_slope_no_rvol_width_wider
+
+summary_thresholds:
+  minimum_trades_total: 30
+  minimum_trades_per_year: 12.0
+  target_trades_per_year: 15.0
+  minimum_frequency_uplift_ratio: 1.05
+  minimum_expectancy_ratio_vs_reference: 0.75
+  minimum_profit_factor_ratio_vs_reference: 0.90
+  maximum_drawdown_multiple_vs_reference: 2.00
+  minimum_positive_year_ratio: 0.50
+  minimum_positive_quarter_ratio: 0.35
+  maximum_year_net_pnl_concentration: 0.80
+
+variants:
+  - name: reference
+    label: width_wider reference
+    candidate: true
+    overrides: {}
+
+  - name: width_laxer
+    label: Slightly laxer OR width gate
+    candidate: true
+    overrides:
+      strategy:
+        minimum_opening_range_width_atr: 0.30
+        maximum_opening_range_width_atr: 3.00
+
+  - name: width_broader
+    label: Broader OR width gate
+    candidate: true
+    overrides:
+      strategy:
+        minimum_opening_range_width_atr: 0.20
+        maximum_opening_range_width_atr: 3.20
+
+  - name: extension_laxer
+    label: Slightly laxer breakout extension
+    candidate: true
+    overrides:
+      strategy:
+        max_breakout_distance_atr: 0.45
+
+  - name: extension_permissive
+    label: More permissive breakout extension
+    candidate: true
+    overrides:
+      strategy:
+        max_breakout_distance_atr: 0.55
+
+  - name: trades_day_2
+    label: Max 2 trades per day
+    candidate: true
+    overrides:
+      strategy:
+        max_breakouts_per_day: 2
+      risk:
+        max_trades_per_day: 2
+
+  - name: trades_day_4
+    label: Max 4 trades per day
+    candidate: true
+    overrides:
+      strategy:
+        max_breakouts_per_day: 4
+      risk:
+        max_trades_per_day: 4
+
+  - name: first_only_diagnostic
+    label: First breakout only diagnostic
+    candidate: false
+    overrides:
+      strategy:
+        max_breakouts_per_day: 1
+      risk:
+        max_trades_per_day: 1
+
+  - name: core_hours_14_18
+    label: Core hours 14-18 UTC diagnostic
+    candidate: false
+    overrides:
+      strategy:
+        allowed_hours_utc:
+          - 14
+          - 15
+          - 16
+          - 17
+          - 18
+        blocked_hours_utc: []
+
+  - name: width_laxer_extension_laxer
+    label: Laxer width plus laxer extension
+    candidate: true
+    overrides:
+      strategy:
+        minimum_opening_range_width_atr: 0.30
+        maximum_opening_range_width_atr: 3.00
+        max_breakout_distance_atr: 0.45
+
+  - name: width_broader_extension_laxer_trades4
+    label: Broader width plus extension plus 4 trades
+    candidate: true
+    overrides:
+      strategy:
+        minimum_opening_range_width_atr: 0.20
+        maximum_opening_range_width_atr: 3.20
+        max_breakout_distance_atr: 0.45
+        max_breakouts_per_day: 4
+      risk:
+        max_trades_per_day: 4

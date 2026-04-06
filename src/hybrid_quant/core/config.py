@@ -64,6 +64,8 @@ class FeatureConfig:
     lookback_window: int = 96
     regime_window: int = 288
     normalize: bool = True
+    ema_slope_lookback_hours: int = 3
+    relative_volume_lookback_sessions: int = 20
 
 
 @dataclass(slots=True)
@@ -87,7 +89,10 @@ class StrategyConfig:
     no_entry_minutes_before_close: int = 30
     blocked_hours_utc: list[int] = field(default_factory=list)
     allowed_hours_utc: list[int] = field(default_factory=list)
+    allowed_hours_long_utc: list[int] = field(default_factory=list)
+    allowed_hours_short_utc: list[int] = field(default_factory=list)
     allowed_weekdays: list[int] = field(default_factory=list)
+    allowed_sides: list[str] = field(default_factory=list)
     exclude_weekends: bool = False
     minimum_anchor_distance_atr: float = 0.0
     minimum_expected_move_bps: float = 0.0
@@ -99,6 +104,27 @@ class StrategyConfig:
     momentum_lookback_bars: int = 20
     minimum_momentum_abs: float = 0.0
     minimum_candle_range_atr: float = 0.0
+    use_ema_200_1h_trend_filter: bool = True
+    use_ema_200_1h_slope: bool = True
+    ema_200_1h_slope_tolerance: float = 0.0
+    entry_mode: str = "breakout_close_entry"
+    opening_range_minutes: int = 30
+    retest_max_bars: int = 3
+    minimum_opening_range_width_atr: float = 0.0
+    maximum_opening_range_width_atr: float = 0.0
+    minimum_relative_volume: float = 0.0
+    max_breakout_distance_atr: float = 0.0
+    max_breakouts_per_day: int = 1
+    minimum_acceptance_bars: int = 1
+    maximum_pullback_depth_atr: float = 0.0
+    use_intraday_vwap_filter: bool = False
+    use_intraday_ema20_filter: bool = False
+    use_intraday_ema50_alignment: bool = True
+    use_opening_range_mid_filter: bool = True
+    session_trend_structure_lookback_bars: int = 3
+    maximum_context_compression_width_atr: float = 1.5
+    require_context_vwap_structure: bool = True
+    require_context_or_mid_structure: bool = True
 
 
 @dataclass(slots=True)

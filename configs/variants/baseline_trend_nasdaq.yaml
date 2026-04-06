@@ -37,7 +37,7 @@ features:
 
 strategy:
   family: trend_breakout
-  name: trend_breakout_nasdaq
+  name: trend_breakout_nasdaq_legacy
   variant_name: baseline_trend_nasdaq
   trend_filter: ema_200_1h
   regime_filter: adx_1h

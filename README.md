@@ -1,44 +1,65 @@
 # Hybrid Quant Framework
 
-Framework cuantitativo modular en Python para `BTCUSDT` intradia, con baseline rule-based reproducible, Risk Engine prop-firm friendly, entorno RL compatible con Gymnasium y primer pipeline PPO ya conectado.
+Framework cuantitativo modular en Python para research intradía. El proyecto mantiene la infraestructura de datos, features, backtest, risk, diagnostics y RL, pero la baseline principal de Nasdaq pasa ahora a ser una estrategia clara de `Opening Range Breakout (ORB)` sobre `NQ`.
 
-## Estado real del repo
+## Estado actual
 
-Ya implementado:
+Implementado:
 
-- ingesta OHLCV historica desde Binance REST
-- limpieza temporal, deduplicacion, validacion de indices y exportacion a Parquet
-- split temporal `train / validation / test`
+- ingesta OHLCV, limpieza temporal, validación y exportación a `CSV / Parquet`
 - features deterministas multi-timeframe
-- estrategia intradia de mean reversion con `EMA200 1H` y `ADX 1H`
-- nueva familia de estrategia intradia `trend-following / breakout` para `NQ`
-- backtest con costes, slippage, `SL / TP`, `time stop` y cierre de sesion
-- `PropFirmRiskEngine` integrado en el baseline runner
-- capa compartida de ejecucion con `PortfolioSimulator`
-- entorno RL `HybridTradingEnvironment`
-- integracion PPO con `stable-baselines3`
-- diagnostico detallado del baseline y comparacion entre variantes
-- tests unitarios e integracion sobre data, baseline, risk, env y RL
+- baseline reproducible con `BaselineRunner`
+- `PropFirmRiskEngine`
+- backtest con costes, slippage, `SL / TP`, `time stop` y cierre forzoso de sesión
+- diagnostics detallados y artifacts exportables
+- entorno Gymnasium y PPO ya cableados, pero no son la prioridad actual
 
-Pendiente:
+Prioridad actual:
 
-- validacion robusta out-of-sample
-- entrenamiento PPO largo y evaluacion estadistica seria
-- SAC / TD3
-- LSTM / Transformer
-- multiactivo
-- live trading / MQL5
+- validar una baseline Nasdaq seria antes de volver a RL
+- usar `baseline_nq_orb` como baseline principal de Nasdaq
 
-## Universo actual
+## Baseline principal de Nasdaq
 
-- activo: `BTCUSDT`
-- timeframe operativo: `5m`
-- timeframe filtro: `1H`
-- estilo: `intradia`
-- baseline rule-based: mean reversion con filtro de tendencia y regimen
-- RL actual: decision discreta sobre candidate trades generados por la estrategia
+La baseline principal de Nasdaq es:
 
-Tambien existe ya una familia separada `trend_breakout` orientada a Nasdaq (`NQ`) usando el mismo backtester, Risk Engine y pipeline de features. De momento esta variante esta pensada para ejecutarse con OHLCV local via `--input-path`, porque la infraestructura de descarga automatica sigue siendo crypto-centric.
+- `baseline_nq_orb`
+
+Familia:
+
+- `opening_range_breakout`
+
+Lógica base:
+
+- construye un `opening range` configurable de `15m` o `30m`
+- calcula `opening_range_high`, `opening_range_low`, `opening_range_width` y `opening_range_width_atr`
+- entra solo en ruptura del opening range
+- filtra largos con `close > EMA200 1H` y `EMA200 1H slope > 0`
+- filtra cortos con `close < EMA200 1H` y `EMA200 1H slope < 0`
+- aplica filtros mínimos de calidad:
+  - expansión mínima de la vela
+  - momentum mínimo
+  - ancho mínimo y máximo del opening range relativo a ATR
+  - `relative_volume` mínimo
+  - filtro anti-chase por `breakout_distance_atr`
+- soporta dos modos de entrada:
+  - `breakout_close_entry`
+  - `breakout_retest_entry`
+
+La configuración vive en:
+
+- [configs/variants/baseline_nq_orb.yaml](configs/variants/baseline_nq_orb.yaml)
+
+## Qué queda como legacy
+
+La familia anterior `trend_breakout` no desaparece, pero deja de ser la baseline principal de Nasdaq.
+
+Se conserva solo por compatibilidad y comparación histórica:
+
+- [configs/variants/baseline_trend_nasdaq.yaml](configs/variants/baseline_trend_nasdaq.yaml)
+- [src/hybrid_quant/strategy/trend_breakout.py](src/hybrid_quant/strategy/trend_breakout.py)
+
+Las variantes experimentales de esa familia deben tratarse como `legacy / deprecated`, no como flujo principal.
 
 ## Arquitectura
 
@@ -64,97 +85,14 @@ hybrid-quant-framework/
 `-- tests/
 ```
 
-Modulos clave:
+Módulos que tocan la baseline ORB:
 
-- `data`: descarga, limpieza, validacion temporal, parquet y splits.
-- `features`: calculo determinista de indicadores y contexto de mercado.
-- `strategy`: candidate trades del baseline rule-based.
-- `execution`: simulacion compartida de portfolio y semantica de ejecucion.
-- `risk`: guardrails prop-firm friendly.
-- `backtest`: simulacion determinista del baseline.
-- `baseline`: pipeline reproducible, diagnostico y comparacion entre variantes.
-- `env`: entorno RL compatible con Gymnasium.
-- `rl`: dataset builder, trainer PPO, evaluacion y runner reproducible.
+- `features`: cálculo de opening range, slope y `relative_volume`
+- `strategy`: nueva familia `opening_range_breakout`
+- `baseline`: runner y diagnostics
+- `configs/variants`: baseline principal Nasdaq y legacy
 
-## Baselines disponibles
-
-### `baseline_v1`
-
-Es la referencia historica del proyecto y la que se usa para mantener continuidad con el diagnostico existente. Para comparaciones apples-to-apples se ejecuta en modo directo `strategy + backtest`, sin el filtrado adicional del `BaselineRunner`.
-
-### `baseline_v2`
-
-Es una variante mas selectiva y cost-aware definida en [configs/variants/baseline_v2.yaml](configs/variants/baseline_v2.yaml). Introduce cambios pequenos, interpretables y defendibles:
-
-- bloqueo de horas toxicas detectadas en el diagnostico
-- exclusion de fines de semana
-- cooldown mas estricto
-- `ADX` mas selectivo para el filtro de regimen
-- `TP` mas amplio para mejorar estructura economica
-- filtro simple de `target_to_cost_ratio` para evitar setups que no compensan fees + slippage
-
-### `baseline_v3`
-
-Es un refinement quirurgico sobre `baseline_v2`. Mantiene la misma logica base y el mismo quality gate cost-aware, pero excluye tambien una segunda franja de horas donde `baseline_v2` seguia destruyendose en neto. La intencion es muy simple:
-
-- seguir con frecuencia baja
-- reducir aun mas fees
-- evitar ventanas de baja calidad despues del filtro cost-aware
-- intentar cruzar break-even neto sin aumentar drawdown
-
-### `baseline_trend_nasdaq`
-
-Es una familia nueva, separada de mean reversion. Usa un enfoque interpretable de `trend-following / breakout` intradia sobre `NQ`:
-
-- filtro de tendencia con `EMA200 1H`
-- filtro de regimen con `ADX 1H`
-- ruptura del rango previo con confirmacion de momentum
-- expansion minima de volatilidad en la vela de ruptura
-- quality gate cost-aware para evitar breakouts demasiado pequenos
-- `SL / TP / time stop / close on session end` reutilizando la misma semantica de ejecucion del framework
-
-La configuracion vive en [configs/variants/baseline_trend_nasdaq.yaml](configs/variants/baseline_trend_nasdaq.yaml).
-
-## Entorno RL
-
-El entorno actual es `HybridTradingEnvironment`. La semantica completa esta documentada en [docs/rl_environment.md](docs/rl_environment.md).
-
-Resumen corto:
-
-- observacion: features de la barra actual + estado del portfolio + estado de riesgo + candidate trade actual
-- acciones:
-  - `0 = skip`
-  - `1 = take_trade`
-  - `2 = close_early`
-- la estrategia sigue generando candidate trades
-- el agente no inventa setups todavia
-- `PortfolioSimulator` resuelve ejecucion y cierres
-- `PropFirmRiskEngine` aprueba o bloquea entradas
-
-Nota de configuracion:
-
-- `state_context_bars` es el nombre canonico
-- `observation_window` queda como alias compatible
-- hoy la observacion sigue siendo single-bar, no una ventana temporal apilada real
-
-## PPO actual
-
-La integracion PPO vive en:
-
-- [src/hybrid_quant/rl/trainer.py](src/hybrid_quant/rl/trainer.py)
-- [src/hybrid_quant/rl/runner.py](src/hybrid_quant/rl/runner.py)
-- [src/hybrid_quant/rl/evaluation.py](src/hybrid_quant/rl/evaluation.py)
-- [src/hybrid_quant/rl/dataset.py](src/hybrid_quant/rl/dataset.py)
-
-Flujo:
-
-1. preparar OHLCV y features
-2. construir splits temporales `train / validation / test`
-3. entrenar PPO por multiples seeds
-4. guardar checkpoints y mejor modelo
-5. evaluar `baseline_without_rl`, `random_policy` y `ppo_trained`
-
-## Instalacion
+## Instalación
 
 ```powershell
 python -m venv .venv
@@ -162,83 +100,49 @@ python -m venv .venv
 pip install -e .[dev]
 ```
 
-## Tests
+## Importar un dataset externo de NQ/MNQ
 
-```powershell
-$env:PYTHONPATH = "src"
-python -m unittest discover -s tests -v
-```
+Formatos aceptados:
 
-## Ingesta de datos
+- `CSV`
+- `Parquet`
 
-Descarga OHLCV:
+Esquema interno objetivo:
 
-```powershell
-$env:PYTHONPATH = "src"
-python -m hybrid_quant.data download `
-  --config-dir configs `
-  --start 2024-01-01T00:00:00+00:00 `
-  --end 2024-02-01T00:00:00+00:00
-```
+- `open_time`
+- `open`
+- `high`
+- `low`
+- `close`
+- `volume`
 
-Split de un dataset existente:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m hybrid_quant.data split `
-  --config-dir configs `
-  --input-path data/raw/BTCUSDT/5m/ohlcv.parquet
-```
-
-Importacion de OHLCV externo a esquema interno:
-
-- formatos aceptados: `CSV` y `Parquet`
-- esquema interno esperado por el framework:
-  - `open_time`
-  - `open`
-  - `high`
-  - `low`
-  - `close`
-  - `volume`
-- aliases comunes soportados en importacion:
-  - timestamp: `open_time`, `timestamp`, `datetime`, `date_time`, `time`, `date`, `bar_time`
-  - OHLC: `Open/High/Low/Close`, `O/H/L/C`, variantes con mayusculas, espacios o `<DATE>/<TIME>`
-  - volumen: `volume`, `vol`, `tick_volume`, `contracts`
-- validaciones aplicadas:
-  - archivo existente y legible
-  - timestamps parseables
-  - orden temporal ascendente
-  - limpieza de duplicados
-  - verificacion de cadencia dominante `5m`
-  - chequeo de gaps con `--allow-gaps` cuando el mercado tenga cierres o huecos de sesion
-
-Ejemplo para convertir un export externo de `NQ/MNQ/Nasdaq 5m`:
+Ejemplo:
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m hybrid_quant.data import `
   --config-dir configs `
-  --input-path data/external/NQ_5m_export.csv `
-  --output-path data/raw/NQ/5m/ohlcv-normalized.csv `
+  --input-path "C:\ruta\a\tu\export_externo_nq_5m.csv" `
+  --output-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
   --interval 5m `
   --allow-gaps
 ```
 
-Tambien puedes usar el entrypoint directo:
+## Ejecutar la baseline ORB de Nasdaq
+
+Backtest directo sobre un dataset local normalizado:
 
 ```powershell
 $env:PYTHONPATH = "src"
-hq-data-import `
+python -m hybrid_quant.baseline `
   --config-dir configs `
-  --input-path data/external/NQ_5m_export.csv `
-  --output-path data/raw/NQ/5m/ohlcv-normalized.csv `
-  --interval 5m `
+  --variant baseline_nq_orb `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --output-dir "artifacts/baseline-nq-orb" `
   --allow-gaps
 ```
 
-## Baseline runner con Risk Engine
-
-Este pipeline genera:
+Artefactos generados:
 
 - `ohlcv.csv`
 - `features.csv`
@@ -249,207 +153,443 @@ Este pipeline genera:
 - `report.json`
 - `summary.md`
 
-Ejecucion:
+También puedes limitar el rango temporal desde CLI sin tocar código, usando un dataset descargado o la infraestructura de datos ya existente:
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m hybrid_quant.baseline `
   --config-dir configs `
+  --variant baseline_nq_orb `
   --start 2024-01-01T00:00:00+00:00 `
-  --end 2024-03-31T23:55:00+00:00 `
-  --output-dir artifacts/baseline-q1-2024
+  --end 2024-12-31T23:55:00+00:00 `
+  --output-dir "artifacts/baseline-nq-orb-2024"
 ```
 
-Ejemplo para la familia nueva `baseline_trend_nasdaq` usando un CSV/Parquet local de `NQ 5m`:
+## Ejecutar diagnóstico de la baseline ORB
 
-```powershell
-$env:PYTHONPATH = "src"
-python -m hybrid_quant.baseline `
-  --config-dir configs `
-  --variant baseline_trend_nasdaq `
-  --input-path data/raw/NQ/5m/ohlcv-normalized.csv `
-  --output-dir artifacts/baseline-trend-nasdaq `
-  --allow-gaps
-```
-
-## Diagnostico del baseline
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m hybrid_quant.baseline.diagnostics `
-  --config-dir configs `
-  --artifact-dir artifacts/baseline-q1-2024 `
-  --output-dir artifacts/baseline-q1-2024-diagnostics
-```
-
-Para la nueva baseline `baseline_trend_nasdaq`, el flujo mas comodo es un solo paso desde `input-path`:
+Flujo de un solo paso:
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m hybrid_quant.baseline.analyze `
   --config-dir configs `
-  --variant baseline_trend_nasdaq `
-  --input-path data/raw/NQ/5m/ohlcv-normalized.csv `
-  --output-dir artifacts/baseline-trend-nasdaq-analysis `
+  --variant baseline_nq_orb `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --output-dir "artifacts/baseline-nq-orb-analysis" `
   --allow-gaps
 ```
 
-Esto genera primero el baseline reproducible y luego su diagnostico completo en:
+Diagnostics ahora incluye, además de lo anterior:
 
-- `artifacts/.../baseline/`
-- `artifacts/.../diagnostics/`
+- resultados por año
+- resultados por hora
+- resultados por día de la semana
+- `profit factor`
+- primera ruptura del día vs siguientes
+- `MFE / MAE`
+- `breakout_distance_atr`
+- distribución por ancho del opening range
 
-## Comparacion baseline_v1 vs baseline_v2 vs baseline_v3
+## Ejecutar ablaciones ORB
 
-La comparacion usa el mismo `ohlcv.csv` para las variantes seleccionadas y genera artefactos raiz como:
+La matriz reproducible de ablaciones vive en:
 
-- `baseline_comparison.json`
-- `baseline_comparison_summary.md`
-- `baseline_v1_report.json`
-- `baseline_v2_report.json`
-- `baseline_v3_report.json`
-- `baseline_v1_v2_v3_comparison.json`
-- `baseline_v1_v2_v3_summary.md`
-- `baseline_v2_monthly_breakdown.csv`
-- `baseline_v2_hourly_breakdown.csv`
-- `baseline_v2_exit_reason_breakdown.csv`
-- `baseline_v2_side_breakdown.csv`
-- `baseline_v3_monthly_breakdown.csv`
-- `baseline_v3_hourly_breakdown.csv`
+- `configs/experiments/orb_ablation.yaml`
 
-Ejemplo reproducible sobre el baseline historico Q1:
+La matriz por defecto compara:
 
-```powershell
-$env:PYTHONPATH = "src"
-python -m hybrid_quant.baseline.comparison `
-  --config-dir configs `
-  --input-path artifacts/baseline-q1-2024/ohlcv.csv `
-  --output-dir artifacts/baseline-v1-v2-v3-q1-2024 `
-  --oos-start 2024-03-01T00:00:00+00:00 `
-  --oos-end 2024-03-31T23:55:00+00:00
-```
+- opening range `15m` vs `30m`
+- `breakout_close_entry` vs `breakout_retest_entry`
+- solo primera ruptura del día vs múltiples rupturas
+- con slope de `EMA200 1H` vs sin slope
+- con filtro de `RVOL` vs sin filtro de `RVOL`
 
-Tambien puedes usar el wrapper:
+Runner reproducible:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python scripts/compare_baselines.py `
+python -m hybrid_quant.baseline.orb_ablation `
   --config-dir configs `
-  --input-path artifacts/baseline-q1-2024/ohlcv.csv `
-  --output-dir artifacts/baseline-v1-v2-v3-q1-2024
-```
-
-Comparacion generica de variantes, incluyendo la nueva familia `trend_breakout`:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m hybrid_quant.baseline.comparison `
-  --config-dir configs `
-  --input-path data/raw/NQ/5m/ohlcv.csv `
-  --output-dir artifacts/comparison-trend-nasdaq `
-  --variant baseline_trend_nasdaq `
-  --variant baseline_v3 `
+  --experiment-config "configs/experiments/orb_ablation.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --output-dir "artifacts/orb-ablation" `
   --allow-gaps
 ```
 
-## Entrenamiento PPO
-
-Con entrypoint del proyecto:
+También puedes recortar el rango temporal desde CLI:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m hybrid_quant.rl.runner `
+python -m hybrid_quant.baseline.orb_ablation `
   --config-dir configs `
-  --input-path data/raw/BTCUSDT/5m/ohlcv.parquet `
-  --output-dir artifacts/ppo-baseline
-```
-
-O con script:
-
-```powershell
-$env:PYTHONPATH = "src"
-python scripts/train_ppo.py `
-  --config-dir configs `
-  --input-path data/raw/BTCUSDT/5m/ohlcv.parquet `
-  --output-dir artifacts/ppo-baseline
-```
-
-## Configuracion relevante
-
-- [configs/backtest.yaml](configs/backtest.yaml): costes, slippage y politica intrabar.
-- [configs/risk.yaml](configs/risk.yaml): limites prop-firm y sesion.
-- [configs/strategy.yaml](configs/strategy.yaml): baseline historica `baseline_v1`.
-- [configs/variants/baseline_v2.yaml](configs/variants/baseline_v2.yaml): override selectivo y cost-aware.
-- [configs/variants/baseline_v3.yaml](configs/variants/baseline_v3.yaml): refinement quirurgico de ventanas horarias sobre `baseline_v2`.
-- [configs/variants/baseline_trend_nasdaq.yaml](configs/variants/baseline_trend_nasdaq.yaml): nueva familia `trend_breakout` para Nasdaq con filtros de ruptura y momentum.
-- [configs/env.yaml](configs/env.yaml): `max_steps`, `reward_mode`, `state_context_bars`.
-- [configs/rl.yaml](configs/rl.yaml): seeds, PPO, checkpoints y splits de entrenamiento.
-
-## Estado practico
-
-El proyecto esta listo para seguir iterando con PPO a nivel de arquitectura, pero la decision correcta sigue siendo endurecer primero la baseline rule-based y su validacion out-of-sample. `baseline_v1` queda como control historico, `baseline_v2` como mejora selectiva cost-aware y `baseline_v3` como refinement quirurgico antes del sprint de validacion robusta.
-
-## Validacion robusta de baseline_v3
-
-La validacion robusta vive en [robustness.py](src/hybrid_quant/validation/robustness.py) y no toca PPO. Su objetivo es responder si `baseline_v3` merece pasar al siguiente nivel de investigacion.
-
-Incluye:
-
-- walk-forward rolling real con ventanas `train / validation / test`
-- bloques temporales mensuales para comprobar consistencia fuera del tramo principal
-- Monte Carlo por reordenacion de trades con seed fija
-- sensibilidad a fees y slippage
-- clasificacion final `GO`, `GO WITH CAUTION` o `NO-GO`
-
-Artefactos principales:
-
-- `robustness_report.json`
-- `robustness_summary.md`
-- `walk_forward_results.csv`
-- `temporal_block_results.csv`
-- `monte_carlo_summary.json`
-- `cost_sensitivity.csv`
-- aliases opcionales como `robustness_report_extended.json` si usas `--artifact-suffix`
-
-Ejemplo de ejecucion sobre un dataset local:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m hybrid_quant.validation `
-  --config-dir configs `
-  --input-path artifacts/baseline-q1-2024/ohlcv.csv `
-  --output-dir artifacts/baseline-v3-robustness-q1-2024 `
-  --variant baseline_v3
-```
-
-Tambien puede descargar y validar directamente desde la infraestructura de datos ya existente:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m hybrid_quant.validation `
-  --config-dir configs `
-  --start 2023-01-01T00:00:00+00:00 `
+  --experiment-config "configs/experiments/orb_ablation.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --start 2024-01-01T00:00:00+00:00 `
   --end 2024-12-31T23:55:00+00:00 `
-  --output-dir artifacts/baseline-v3-robustness-extended `
-  --variant baseline_v3 `
-  --allow-gaps `
-  --artifact-suffix extended
+  --output-dir "artifacts/orb-ablation-2024" `
+  --allow-gaps
 ```
 
-Comparacion entre una validacion Q1 y una validacion extendida:
+Artifacts principales de la ablación:
+
+- `orb_ablation_comparison.json`
+- `orb_ablation_results.csv`
+- `orb_ablation_summary.md`
+- `opening_range_summary.csv`
+- `entry_mode_summary.csv`
+- `breakout_budget_summary.csv`
+- `ema_slope_summary.csv`
+- `relative_volume_summary.csv`
+
+Cada variante también deja su propia carpeta:
+
+- `variants/<variant>/baseline`
+- `variants/<variant>/diagnostics`
+
+## Ejecutar validación focalizada de la subfamilia ORB ganadora
+
+La sensibilidad local alrededor de la subfamilia ganadora vive en:
+
+- `configs/experiments/orb_focus_validation.yaml`
+
+Esta fase no hace un grid search agresivo. Solo compara ajustes pequeños y trazables alrededor de:
+
+- `orb30_close_multi_no_slope_no_rvol`
+
+Runner reproducible:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m hybrid_quant.validation.comparison `
-  --baseline-report artifacts/baseline-v3-robustness-q1-2024/robustness_report.json `
-  --extended-report artifacts/baseline-v3-robustness-extended/robustness_report_extended.json `
-  --output-dir artifacts/baseline-v3-robustness-comparison `
-  --baseline-label q1_2024 `
-  --extended-label extended_2023_2024
+python -m hybrid_quant.baseline.orb_focus_validation `
+  --config-dir configs `
+  --experiment-config "configs/experiments/orb_focus_validation.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --output-dir "artifacts/orb-focus-validation-full" `
+  --allow-gaps
 ```
 
-Como interpretar la clasificacion:
+Artifacts principales:
 
-- `GO`: la baseline supera de forma suficientemente limpia los checks temporales, de drawdown y de sensibilidad.
-- `GO WITH CAUTION`: la baseline es prometedora, pero aun necesita mas evidencia temporal antes de volver a PPO.
-- `NO-GO`: la baseline todavia no es lo bastante robusta y no merece pasar al siguiente nivel de investigacion.
+- `orb_focus_validation_comparison.json`
+- `orb_focus_validation_results.csv`
+- `orb_focus_validation_summary.md`
+- `temporal_block_results.csv`
+- `yearly_variant_summary.csv`
+- `quarterly_variant_summary.csv`
+- `yearly_equity_curve_summary.csv`
+
+Cada variante también deja su propia carpeta:
+
+- `variants/<variant>/baseline`
+- `variants/<variant>/diagnostics`
+
+## Ejecutar expansión controlada de frecuencia alrededor de width_wider
+
+La sensibilidad local orientada a frecuencia vive en:
+
+- `configs/experiments/orb_frequency_expansion.yaml`
+
+La referencia central es:
+
+- `orb30_close_multi_no_slope_no_rvol_width_wider`
+
+Esta fase no hace un grid search agresivo. Solo abre localmente la frecuencia alrededor de `width_wider` y exige guard rails explícitos sobre:
+
+- `expectancy`
+- `profit_factor`
+- `max_drawdown`
+- estabilidad temporal básica
+
+Runner reproducible:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.baseline.orb_frequency_expansion `
+  --config-dir configs `
+  --experiment-config "configs/experiments/orb_frequency_expansion.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --output-dir "artifacts/orb-frequency-expansion-full" `
+  --allow-gaps
+```
+
+Artifacts principales:
+
+- `orb_frequency_expansion_comparison.json`
+- `orb_frequency_expansion_results.csv`
+- `orb_frequency_expansion_summary.md`
+- `activity_summary.csv`
+- `temporal_block_results.csv`
+- `yearly_variant_summary.csv`
+- `quarterly_variant_summary.csv`
+- `yearly_equity_curve_summary.csv`
+
+Cada variante también deja su propia carpeta:
+
+- `variants/<variant>/baseline`
+- `variants/<variant>/diagnostics`
+
+## Ejecutar frequency push alrededor de las candidatas ORB
+
+La fase de empuje de frecuencia vive en:
+
+- `configs/experiments/orb_frequency_push.yaml`
+
+Toma como base:
+
+- `extension_laxer`
+- `width_laxer_extension_laxer`
+- `width_wider` como control conservador
+
+No hace un grid search masivo. Solo intenta comprobar si esta subfamilia puede acercarse a una zona más práctica de actividad, con guard rails explícitos sobre:
+
+- `profit_factor`
+- `expectancy`
+- `max_drawdown`
+- estabilidad temporal por año y trimestre
+
+Runner reproducible:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.baseline.orb_frequency_push `
+  --config-dir configs `
+  --experiment-config "configs/experiments/orb_frequency_push.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --output-dir "artifacts/orb-frequency-push-full" `
+  --allow-gaps
+```
+
+Artifacts principales:
+
+- `orb_frequency_push_comparison.json`
+- `orb_frequency_push_results.csv`
+- `orb_frequency_push_summary.md`
+- `activity_summary.csv`
+- `yearly_variant_summary.csv`
+- `quarterly_variant_summary.csv`
+- `candidate_ranking.csv`
+
+## Ejecutar la nueva familia ORB intradía activa
+
+La nueva dirección de research vive en:
+
+- `configs/variants/baseline_nq_intraday_orb_active.yaml`
+- `configs/experiments/orb_intraday_active_research.yaml`
+
+Esta familia no reutiliza la ORB clásica como lógica principal. Sigue anclada al opening range, pero busca más oportunidades intradía con tres setups explícitos:
+
+- `breakout_continuation`
+- `first_pullback_after_breakout`
+- `reclaim_acceptance`
+
+La referencia histórica anterior sigue disponible como control:
+
+- `baseline_nq_orb`
+
+Runner reproducible:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.baseline.orb_intraday_active_research `
+  --config-dir configs `
+  --experiment-config "configs/experiments/orb_intraday_active_research.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --output-dir "artifacts/orb-intraday-active-full" `
+  --allow-gaps
+```
+
+Artifacts principales:
+
+- `orb_intraday_active_comparison.json`
+- `orb_intraday_active_results.csv`
+- `orb_intraday_active_summary.md`
+- `activity_summary.csv`
+- `yearly_variant_summary.csv`
+- `quarterly_variant_summary.csv`
+- `candidate_ranking.csv`
+
+Cada variante deja además:
+
+- `variants/<variant>/baseline`
+- `variants/<variant>/diagnostics`
+
+## Tests
+
+Suite completa:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m unittest discover -s tests -v
+```
+
+Tests ORB más relevantes:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m unittest `
+  tests.unit.test_features_deterministic `
+  tests.unit.test_strategy_opening_range_breakout `
+  tests.unit.test_strategy_orb_intraday_active `
+  tests.integration.test_baseline_nq_orb_flow `
+  tests.integration.test_orb_intraday_active_research_flow -v
+```
+
+## Nueva familia contextual intradia
+
+La nueva direccion de research intradia para Nasdaq vive en:
+
+- `configs/variants/baseline_nq_intraday_contextual.yaml`
+- `configs/experiments/intraday_nasdaq_contextual_research.yaml`
+
+Esta familia usa el opening range como contexto, pero ya no depende solo de una ruptura rigida. Compara tres setups:
+
+- `context_pullback_continuation`
+- `vwap_reclaim_acceptance`
+- `session_trend_continuation`
+
+Runner reproducible:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.baseline.intraday_nasdaq_contextual_research `
+  --config-dir configs `
+  --experiment-config "configs/experiments/intraday_nasdaq_contextual_research.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --output-dir "artifacts/intraday-nasdaq-contextual-full" `
+  --allow-gaps
+```
+
+Artifacts principales:
+
+- `intraday_nasdaq_contextual_comparison.json`
+- `intraday_nasdaq_contextual_results.csv`
+- `intraday_nasdaq_contextual_summary.md`
+- `activity_summary.csv`
+- `yearly_variant_summary.csv`
+- `quarterly_variant_summary.csv`
+- `candidate_ranking.csv`
+
+Tests mas relevantes para esta fase:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m unittest `
+  tests.unit.test_strategy_intraday_nasdaq_contextual `
+  tests.integration.test_intraday_nasdaq_contextual_research_flow -v
+```
+
+## Ejecutar el zoom sobre session_trend_30m
+
+La fase focalizada sobre `session_trend_30m` vive en:
+
+- `configs/variants/session_trend_30m.yaml`
+- `configs/experiments/session_trend_30m_zoom.yaml`
+- `src/hybrid_quant/baseline/session_trend_30m_zoom.py`
+
+Esta fase no cambia la naturaleza de `session_trend_30m`. Solo compara combinaciones controladas de:
+
+- filtro HTF (`EMA200 1H` y slope)
+- contexto intradía (`VWAP`, `EMA20/EMA50`, `OR midpoint`)
+- horas operativas
+- filtro de extensión / momentum
+- confirmaciones secundarias de continuación
+- cap diario de oportunidades
+- sesgo direccional
+
+Runner reproducible:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.baseline.session_trend_30m_zoom `
+  --config-dir configs `
+  --experiment-config "configs/experiments/session_trend_30m_zoom.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized.csv" `
+  --output-dir "artifacts/session-trend-30m-zoom-full" `
+  --allow-gaps
+```
+
+Artifacts principales:
+
+- `session_trend_30m_zoom_comparison.json`
+- `session_trend_30m_zoom_results.csv`
+- `session_trend_30m_zoom_summary.md`
+- `candidate_ranking.csv`
+- `hourly_variant_summary.csv`
+- `side_variant_summary.csv`
+- `temporal_variant_summary.csv`
+- `filter_ablation_summary.csv`
+
+Convención importante:
+
+- `max_drawdown` se guarda como fracción de equity. Por ejemplo, `0.0272` significa `2.72%`.
+
+## Ejecutar la validacion extendida de shorts_strict_clean_hours
+
+La fase extendida alrededor de `shorts_strict_clean_hours` vive en:
+
+- `configs/variants/shorts_strict_clean_hours.yaml`
+- `configs/variants/long_only_clean_hours.yaml`
+- `configs/experiments/shorts_strict_clean_hours_extended.yaml`
+- `src/hybrid_quant/baseline/shorts_strict_clean_hours_extended.py`
+
+La prioridad de lectura aqui es:
+
+- rentabilidad
+- drawdown
+- frecuencia
+
+Convencion importante:
+
+- `max_drawdown` se guarda como fraccion de equity. Ejemplo: `0.02448 = 2.448%`.
+
+Primero importa el CSV real nuevo a una ruta reproducible del repo:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.data import `
+  --config-dir configs `
+  --input-path "C:\Users\joseq\Documents\nuevos_datos.csv" `
+  --output-path "data/raw/NQ/5m/ohlcv-normalized-extended.csv" `
+  --interval 5m `
+  --allow-gaps
+```
+
+Runner reproducible:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.baseline.shorts_strict_clean_hours_extended `
+  --config-dir configs `
+  --experiment-config "configs/experiments/shorts_strict_clean_hours_extended.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized-extended.csv" `
+  --output-dir "artifacts/shorts-strict-clean-hours-extended" `
+  --allow-gaps
+```
+
+Artifacts principales:
+
+- `shorts_strict_clean_hours_extended_comparison.json`
+- `shorts_strict_clean_hours_extended_results.csv`
+- `shorts_strict_clean_hours_extended_summary.md`
+- `candidate_ranking.csv`
+- `comparison_summary.csv`
+- `yearly_variant_summary.csv`
+- `quarterly_variant_summary.csv`
+- `hourly_variant_summary.csv`
+- `side_variant_summary.csv`
+- `dataset_coverage.json`
+
+## RL
+
+El entorno Gymnasium y PPO siguen en el repo, pero no se han tocado en este sprint. La secuencia recomendada ahora es:
+
+1. importar dataset real de `NQ 5m`
+2. correr `baseline_nq_orb`
+3. diagnosticarla
+4. solo después decidir si merece validación robusta y, más adelante, PPO
+
+## TODO razonable
+
+- añadir modo de stop estructural sobre el nivel roto además del stop en ATR
+- enriquecer más el diagnóstico ORB con breakdowns específicos de retest vs close entry
+- decidir más adelante si la familia `trend_breakout` legacy se elimina del todo o se conserva únicamente para comparativa histórica

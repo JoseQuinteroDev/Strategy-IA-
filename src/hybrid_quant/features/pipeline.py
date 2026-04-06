@@ -6,7 +6,7 @@ import pandas as pd
 
 from hybrid_quant.core import FeatureSnapshot, MarketDataBatch
 
-from .deterministic import build_features
+from .deterministic import DeterministicFeatureConfig, build_features
 
 
 @dataclass(slots=True)
@@ -15,6 +15,7 @@ class FeaturePipeline:
     lookback_window: int
     regime_window: int
     normalize: bool = True
+    deterministic_config: DeterministicFeatureConfig | None = None
 
     def transform(self, batch: MarketDataBatch) -> list[FeatureSnapshot]:
         if not batch.bars:
@@ -33,7 +34,7 @@ class FeaturePipeline:
                 for bar in batch.bars
             ]
         )
-        feature_frame = build_features(frame)
+        feature_frame = build_features(frame, config=self.deterministic_config)
         selected_frame = feature_frame
         if self.feature_names:
             missing = [name for name in self.feature_names if name not in feature_frame.columns]

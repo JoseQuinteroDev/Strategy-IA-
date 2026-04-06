@@ -182,3 +182,33 @@ class TrendBreakoutStrategyTests(unittest.TestCase):
         self.assertEqual(signal.side, SignalSide.FLAT)
         self.assertTrue(signal.metadata["session_gate"])
         self.assertIn("Hour whitelist blocked", signal.rationale)
+
+    def test_blocks_trade_when_direction_is_not_allowed(self) -> None:
+        timestamp = datetime(2024, 1, 2, 16, 0, tzinfo=UTC)
+        strategy = _strategy(allowed_sides=["long"])
+        signal = strategy.generate(
+            StrategyContext(
+                symbol="NQ",
+                execution_timeframe="5m",
+                filter_timeframe="1H",
+                bars=[_bar(timestamp, close=109.0)],
+                features=[
+                    _feature(
+                        timestamp,
+                        ema_200_1h=112.0,
+                        adx_1h=29.0,
+                        atr_14=1.5,
+                        breakout_high_20=116.0,
+                        breakout_low_20=110.0,
+                        breakout_range_width_atr_20=4.0,
+                        momentum_20=-0.010,
+                        candle_range_atr=1.0,
+                    )
+                ],
+                regime="trend",
+            )
+        )
+
+        self.assertEqual(signal.side, SignalSide.FLAT)
+        self.assertTrue(signal.metadata["direction_gate"])
+        self.assertIn("Directional filter blocked", signal.rationale)

@@ -1,0 +1,85 @@
+name: orb_ablation
+base_variant: baseline_nq_orb
+
+dimensions:
+  - key: opening_range_minutes
+    label: Opening range
+    options:
+      - key: orb15
+        label: OR 15m
+        value: 15
+        overrides:
+          strategy:
+            opening_range_minutes: 15
+      - key: orb30
+        label: OR 30m
+        value: 30
+        overrides:
+          strategy:
+            opening_range_minutes: 30
+
+  - key: entry_mode
+    label: Entry mode
+    options:
+      - key: close
+        label: Breakout close
+        value: breakout_close_entry
+        overrides:
+          strategy:
+            entry_mode: breakout_close_entry
+      - key: retest
+        label: Breakout retest
+        value: breakout_retest_entry
+        overrides:
+          strategy:
+            entry_mode: breakout_retest_entry
+
+  - key: daily_breakout_policy
+    label: Daily breakout budget
+    options:
+      - key: first
+        label: First breakout only
+        value: first_breakout_only
+        overrides:
+          strategy:
+            max_breakouts_per_day: 1
+          risk:
+            max_trades_per_day: 1
+      - key: multi
+        label: Multiple breakouts
+        value: multiple_breakouts
+        overrides:
+          strategy:
+            max_breakouts_per_day: 3
+          risk:
+            max_trades_per_day: 3
+
+  - key: use_ema_200_1h_slope
+    label: EMA slope filter
+    options:
+      - key: slope
+        label: EMA slope on
+        value: true
+        overrides:
+          strategy:
+            use_ema_200_1h_slope: true
+      - key: no_slope
+        label: EMA slope off
+        value: false
+        overrides:
+          strategy:
+            use_ema_200_1h_slope: false
+
+  - key: use_relative_volume_filter
+    label: RVOL filter
+    options:
+      - key: rvol
+        label: RVOL on
+        value: true
+        overrides: {}
+      - key: no_rvol
+        label: RVOL off
+        value: false
+        overrides:
+          strategy:
+            minimum_relative_volume: 0.0

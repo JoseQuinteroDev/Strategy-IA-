@@ -1,0 +1,179 @@
+name: orb_frequency_push
+base_variant: orb30_close_multi_no_slope_no_rvol_width_laxer_extension_laxer
+
+summary_thresholds:
+  minimum_trades_total: 45
+  minimum_trades_per_year: 15.0
+  target_trades_per_week_avg: 1.0
+  ambitious_trades_per_week_avg: 2.0
+  minimum_profit_factor: 1.10
+  minimum_expectancy_ratio_vs_reference: 0.70
+  minimum_profit_factor_ratio_vs_reference: 0.85
+  maximum_drawdown_multiple_vs_reference: 2.50
+  minimum_positive_year_ratio: 0.50
+  minimum_positive_quarter_ratio: 0.35
+  maximum_year_net_pnl_concentration: 0.80
+
+variants:
+  - name: width_wider_control
+    label: Conservative width_wider control
+    candidate: false
+    overrides:
+      strategy:
+        minimum_opening_range_width_atr: 0.40
+        maximum_opening_range_width_atr: 2.80
+        max_breakout_distance_atr: 0.35
+        max_breakouts_per_day: 3
+        signal_cooldown_bars: 3
+        no_entry_minutes_before_close: 20
+      risk:
+        max_trades_per_day: 3
+
+  - name: extension_laxer_control
+    label: extension_laxer control
+    candidate: true
+    overrides:
+      strategy:
+        minimum_opening_range_width_atr: 0.50
+        maximum_opening_range_width_atr: 2.50
+        max_breakout_distance_atr: 0.45
+        max_breakouts_per_day: 3
+        signal_cooldown_bars: 3
+        no_entry_minutes_before_close: 20
+      risk:
+        max_trades_per_day: 3
+
+  - name: reference
+    label: width_laxer_extension_laxer reference
+    candidate: true
+    overrides: {}
+
+  - name: reference_trades5
+    label: width_laxer_extension_laxer trades/day 5
+    candidate: true
+    overrides:
+      strategy:
+        max_breakouts_per_day: 5
+      risk:
+        max_trades_per_day: 5
+
+  - name: reference_trades6_cooldown1
+    label: width_laxer_extension_laxer trades/day 6 cooldown 1
+    candidate: true
+    overrides:
+      strategy:
+        max_breakouts_per_day: 6
+        signal_cooldown_bars: 1
+      risk:
+        max_trades_per_day: 6
+
+  - name: extension_permissive_trades5
+    label: extension permissive trades/day 5
+    candidate: true
+    overrides:
+      strategy:
+        max_breakout_distance_atr: 0.55
+        max_breakouts_per_day: 5
+      risk:
+        max_trades_per_day: 5
+
+  - name: width_broader_extension_permissive_trades6_cooldown1
+    label: broader width plus extension plus trades/day 6
+    candidate: true
+    overrides:
+      strategy:
+        minimum_opening_range_width_atr: 0.15
+        maximum_opening_range_width_atr: 3.40
+        max_breakout_distance_atr: 0.65
+        max_breakouts_per_day: 6
+        signal_cooldown_bars: 1
+      risk:
+        max_trades_per_day: 6
+
+  - name: reference_late_window5
+    label: width_laxer_extension_laxer late window 5m
+    candidate: true
+    overrides:
+      strategy:
+        no_entry_minutes_before_close: 5
+
+  - name: or15_extension_laxer
+    label: OR15 extension_laxer
+    candidate: true
+    overrides:
+      strategy:
+        opening_range_minutes: 15
+        minimum_opening_range_width_atr: 0.50
+        maximum_opening_range_width_atr: 2.50
+        max_breakout_distance_atr: 0.45
+
+  - name: or15_reference
+    label: OR15 width_laxer_extension_laxer
+    candidate: true
+    overrides:
+      strategy:
+        opening_range_minutes: 15
+
+  - name: or15_reference_trades5
+    label: OR15 width_laxer_extension_laxer trades/day 5
+    candidate: true
+    overrides:
+      strategy:
+        opening_range_minutes: 15
+        max_breakouts_per_day: 5
+      risk:
+        max_trades_per_day: 5
+
+  - name: or15_width_broader_extension_permissive_trades6_cooldown1_late5
+    label: OR15 broader width plus extension plus trades/day 6
+    candidate: true
+    overrides:
+      strategy:
+        opening_range_minutes: 15
+        minimum_opening_range_width_atr: 0.15
+        maximum_opening_range_width_atr: 3.40
+        max_breakout_distance_atr: 0.65
+        max_breakouts_per_day: 6
+        signal_cooldown_bars: 1
+        no_entry_minutes_before_close: 5
+      risk:
+        max_trades_per_day: 6
+
+  - name: long_only_diagnostic_or15_push
+    label: Long-only OR15 diagnostic
+    candidate: false
+    overrides:
+      strategy:
+        opening_range_minutes: 15
+        max_breakouts_per_day: 5
+        allowed_sides:
+          - long
+      risk:
+        max_trades_per_day: 5
+
+  - name: short_only_diagnostic_or15_push
+    label: Short-only OR15 diagnostic
+    candidate: false
+    overrides:
+      strategy:
+        opening_range_minutes: 15
+        max_breakouts_per_day: 5
+        allowed_sides:
+          - short
+      risk:
+        max_trades_per_day: 5
+
+  - name: ceiling_probe_or15_open_trades6
+    label: OR15 ceiling probe
+    candidate: false
+    overrides:
+      strategy:
+        opening_range_minutes: 15
+        minimum_opening_range_width_atr: 0.10
+        maximum_opening_range_width_atr: 3.60
+        max_breakout_distance_atr: 0.75
+        max_breakouts_per_day: 6
+        signal_cooldown_bars: 0
+        no_entry_minutes_before_close: 0
+      risk:
+        max_trades_per_day: 6

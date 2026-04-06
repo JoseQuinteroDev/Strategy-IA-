@@ -25,7 +25,10 @@ class IntradayStrategySupport:
     no_entry_minutes_before_close: int
     blocked_hours_utc: list[int] | None
     allowed_hours_utc: list[int] | None
+    allowed_hours_long_utc: list[int] | None
+    allowed_hours_short_utc: list[int] | None
     allowed_weekdays: list[int] | None
+    allowed_sides: list[str] | None
     exclude_weekends: bool
 
     def _resolve_timestamp(self, context: StrategyContext) -> datetime:
@@ -48,6 +51,24 @@ class IntradayStrategySupport:
             return SignalSide.LONG
         if close_price < anchor_value:
             return SignalSide.SHORT
+        return None
+
+    def _direction_gate_reason(self, side: SignalSide) -> str | None:
+        allowed_sides = {value.strip().lower() for value in (self.allowed_sides or []) if value.strip()}
+        if allowed_sides and side.value not in allowed_sides:
+            return "Directional filter blocked the setup for this baseline variant."
+        return None
+
+    def _side_hour_gate_reason(self, *, side: SignalSide, timestamp: datetime) -> str | None:
+        normalized = timestamp.astimezone(UTC)
+        if side == SignalSide.LONG:
+            allowed_hours = set(self.allowed_hours_long_utc or [])
+            if allowed_hours and normalized.hour not in allowed_hours:
+                return "Long-hour whitelist blocked the setup for this baseline variant."
+        if side == SignalSide.SHORT:
+            allowed_hours = set(self.allowed_hours_short_utc or [])
+            if allowed_hours and normalized.hour not in allowed_hours:
+                return "Short-hour whitelist blocked the setup for this baseline variant."
         return None
 
     def _entry_signal(

@@ -1,0 +1,275 @@
+name: shorts_strict_clean_hours_extended
+base_variant: shorts_strict_clean_hours
+
+summary_thresholds:
+  minimum_trades_total: 40
+  minimum_trades_per_year: 12.0
+  minimum_profit_factor: 1.10
+  strong_profit_factor: 1.20
+  minimum_expectancy: 0.0
+  maximum_drawdown: 0.08
+  target_drawdown_min: 0.01
+  target_drawdown_max: 0.05
+  minimum_positive_year_ratio: 0.50
+  minimum_positive_quarter_ratio: 0.45
+  maximum_year_net_pnl_concentration: 0.70
+
+variants:
+  - name: session_trend_30m_original
+    label: Session trend 30m original
+    candidate: false
+    source_variant: session_trend_30m
+    tags:
+      profile: control
+      focus_group: control
+    overrides: {}
+
+  - name: long_only_clean_hours_control
+    label: Long-only clean hours control
+    candidate: false
+    source_variant: long_only_clean_hours
+    tags:
+      profile: control
+      focus_group: control
+    overrides: {}
+
+  - name: context_reclaim_15m_control
+    label: Context reclaim 15m control
+    candidate: false
+    source_variant: baseline_nq_intraday_contextual
+    tags:
+      profile: control
+      focus_group: control
+    overrides:
+      strategy:
+        entry_mode: vwap_reclaim_acceptance
+        opening_range_minutes: 15
+
+  - name: reference
+    label: Shorts strict clean hours reference
+    candidate: true
+    tags:
+      profile: baseline
+      focus_group: reference
+    overrides: {}
+
+  - name: exclude_15_both_sides
+    label: Exclude 15 UTC for both sides
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: hours
+    overrides:
+      strategy:
+        allowed_hours_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19
+
+  - name: short_hours_tighter
+    label: Shorts tighter hours
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: shorts
+    overrides:
+      strategy:
+        allowed_hours_short_utc:
+          - 14
+          - 16
+          - 19
+
+  - name: short_hours_tightest
+    label: Shorts tightest hours
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: shorts
+    overrides:
+      strategy:
+        allowed_hours_short_utc:
+          - 14
+          - 16
+
+  - name: short_hours_looser
+    label: Shorts looser clean hours
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: shorts
+    overrides:
+      strategy:
+        allowed_hours_short_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19
+
+  - name: continuation_lax
+    label: Continuation slightly laxer
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: continuation
+    overrides:
+      strategy:
+        minimum_momentum_abs: 0.0006
+        max_breakout_distance_atr: 0.95
+
+  - name: continuation_strict
+    label: Continuation slightly stricter
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: continuation
+    overrides:
+      strategy:
+        minimum_momentum_abs: 0.0010
+        minimum_candle_range_atr: 0.40
+        max_breakout_distance_atr: 0.60
+
+  - name: trades_day_3
+    label: Cap 3 trades per day
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: trades_day
+    overrides:
+      strategy:
+        max_breakouts_per_day: 3
+      risk:
+        max_trades_per_day: 3
+
+  - name: trades_day_5
+    label: Cap 5 trades per day
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: trades_day
+    overrides:
+      strategy:
+        max_breakouts_per_day: 5
+      risk:
+        max_trades_per_day: 5
+
+  - name: no_vwap_structure
+    label: Without VWAP structure confirmation
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: context
+    overrides:
+      strategy:
+        require_context_vwap_structure: false
+
+  - name: no_vwap_filter
+    label: Without VWAP context filter
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: context
+    overrides:
+      strategy:
+        use_intraday_vwap_filter: false
+        require_context_vwap_structure: false
+
+  - name: short_only_diag
+    label: Short-only diagnostic
+    candidate: true
+    tags:
+      profile: single_axis
+      focus_group: shorts
+    overrides:
+      strategy:
+        allowed_sides:
+          - short
+
+  - name: exclude_15_strict_shorts
+    label: Exclude 15 plus stricter shorts
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        allowed_hours_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19
+        allowed_hours_short_utc:
+          - 14
+          - 16
+          - 19
+
+  - name: exclude_15_lax_continuation
+    label: Exclude 15 plus lax continuation
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        allowed_hours_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19
+        minimum_momentum_abs: 0.0006
+        max_breakout_distance_atr: 0.95
+
+  - name: short_hours_looser_trades5
+    label: Looser short hours plus 5 trades day
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        allowed_hours_short_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19
+        max_breakouts_per_day: 5
+      risk:
+        max_trades_per_day: 5
+
+  - name: no_vwap_structure_exclude15
+    label: No VWAP structure plus exclude 15
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        require_context_vwap_structure: false
+        allowed_hours_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19
+
+  - name: no_or_mid_exclude15
+    label: No OR midpoint plus exclude 15
+    candidate: true
+    tags:
+      profile: combo
+      focus_group: combo
+    overrides:
+      strategy:
+        use_opening_range_mid_filter: false
+        require_context_or_mid_structure: false
+        allowed_hours_utc:
+          - 14
+          - 16
+          - 17
+          - 18
+          - 19

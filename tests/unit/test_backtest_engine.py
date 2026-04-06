@@ -10,6 +10,7 @@ import pandas as pd
 
 from hybrid_quant.backtest import IntradayBacktestEngine
 from hybrid_quant.baseline import BaselineRunner
+from hybrid_quant.baseline.runner import _filter_frame_by_range
 from hybrid_quant.core import BacktestRequest, FeatureSnapshot, MarketBar, SignalSide, StrategySignal
 
 
@@ -257,6 +258,51 @@ class BaselineRunnerTests(unittest.TestCase):
             self.assertTrue(artifacts.risk_log_path.exists())
             self.assertTrue(artifacts.report_path.exists())
             self.assertTrue(artifacts.summary_path.exists())
+
+    def test_filter_frame_by_range_supports_local_cli_windows(self) -> None:
+        index = pd.date_range("2024-01-01T00:00:00Z", periods=12, freq="5min", tz="UTC")
+        frame = pd.DataFrame(
+            {
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 10.0,
+            },
+            index=index,
+        )
+        frame.index.name = "open_time"
+
+        filtered = _filter_frame_by_range(
+            frame,
+            start=datetime(2024, 1, 1, 0, 10, tzinfo=UTC),
+            end=datetime(2024, 1, 1, 0, 30, tzinfo=UTC),
+        )
+
+        self.assertEqual(len(filtered), 5)
+        self.assertEqual(filtered.index[0], pd.Timestamp("2024-01-01T00:10:00Z"))
+        self.assertEqual(filtered.index[-1], pd.Timestamp("2024-01-01T00:30:00Z"))
+
+    def test_filter_frame_by_range_raises_on_empty_slice(self) -> None:
+        index = pd.date_range("2024-01-01T00:00:00Z", periods=4, freq="5min", tz="UTC")
+        frame = pd.DataFrame(
+            {
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 10.0,
+            },
+            index=index,
+        )
+        frame.index.name = "open_time"
+
+        with self.assertRaises(ValueError):
+            _filter_frame_by_range(
+                frame,
+                start=datetime(2024, 2, 1, 0, 0, tzinfo=UTC),
+                end=datetime(2024, 2, 1, 1, 0, tzinfo=UTC),
+            )
 
             report = json.loads(artifacts.report_path.read_text(encoding="utf-8"))
             required_keys = {
