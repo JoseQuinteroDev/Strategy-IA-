@@ -519,7 +519,9 @@ class RobustnessValidationRunner:
                 exit_zscore_threshold=settings.strategy.exit_zscore,
                 session_close_hour_utc=settings.strategy.session_close_hour_utc,
                 session_close_minute_utc=settings.strategy.session_close_minute_utc,
+                session_close_timezone=settings.strategy.session_close_timezone,
                 intrabar_exit_policy=settings.backtest.intrabar_exit_policy,
+                gap_exit_policy=settings.backtest.gap_exit_policy,
             )
         )
         trade_frame = self._trades_to_frame(result.trade_records)

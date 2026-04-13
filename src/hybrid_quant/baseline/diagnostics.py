@@ -375,7 +375,10 @@ class BaselineDiagnosticsRunner:
             exit_zscore_threshold=self.application.settings.strategy.exit_zscore,
             session_close_hour_utc=self.application.settings.strategy.session_close_hour_utc,
             session_close_minute_utc=self.application.settings.strategy.session_close_minute_utc,
+            session_close_timezone=self.application.settings.strategy.session_close_timezone,
+            session_close_windows=tuple(self.application.settings.strategy.entry_session_windows),
             intrabar_exit_policy=self.application.settings.backtest.intrabar_exit_policy,
+            gap_exit_policy=self.application.settings.backtest.gap_exit_policy,
         )
         return engine.run(request)
 
@@ -999,11 +1002,19 @@ class BaselineDiagnosticsRunner:
             fee_bps=settings.backtest.fee_bps,
             slippage_bps=settings.backtest.slippage_bps,
             intrabar_exit_policy=settings.backtest.intrabar_exit_policy,
+            gap_exit_policy=settings.backtest.gap_exit_policy,
+            point_value=settings.backtest.point_value,
+            contract_step=settings.backtest.contract_step,
+            min_contracts=settings.backtest.min_contracts,
+            max_contracts=settings.backtest.max_contracts,
+            fee_per_contract_per_side=settings.backtest.fee_per_contract_per_side,
+            slippage_points=settings.backtest.slippage_points,
         )
 
         day_start_equity = settings.backtest.initial_capital
         current_day = None
         trades_today = 0
+        consecutive_losses_today = 0
         daily_kill_switch_active = False
         peak_equity = settings.backtest.initial_capital
         rows: list[dict[str, Any]] = []
@@ -1019,6 +1030,7 @@ class BaselineDiagnosticsRunner:
                 current_day = timestamp.date()
                 day_start_equity = simulator.equity(bar.open)
                 trades_today = 0
+                consecutive_losses_today = 0
                 daily_kill_switch_active = False
 
             trade = simulator.step(
@@ -1028,9 +1040,12 @@ class BaselineDiagnosticsRunner:
                 exit_zscore_threshold=settings.strategy.exit_zscore,
                 session_close_hour_utc=settings.strategy.session_close_hour_utc,
                 session_close_minute_utc=settings.strategy.session_close_minute_utc,
+                session_close_timezone=settings.strategy.session_close_timezone,
+                session_close_windows=tuple(settings.strategy.entry_session_windows),
             )
             if trade is not None:
                 trades_today += 1
+                consecutive_losses_today = consecutive_losses_today + 1 if trade.net_pnl <= 0.0 else 0
 
             current_equity = simulator.equity(bar.close)
             peak_equity = max(peak_equity, current_equity)
@@ -1044,10 +1059,15 @@ class BaselineDiagnosticsRunner:
                 cash=simulator.cash,
                 daily_pnl_pct=daily_pnl_pct,
                 open_positions=int(simulator.position is not None) + int(simulator.pending_entry is not None),
-                gross_exposure=(simulator.position.quantity * bar.close) if simulator.position is not None else 0.0,
+                gross_exposure=(
+                    simulator.position.quantity * bar.close * simulator.position.point_value
+                    if simulator.position is not None
+                    else 0.0
+                ),
                 peak_equity=peak_equity,
                 total_drawdown_pct=total_drawdown_pct,
                 trades_today=trades_today,
+                consecutive_losses_today=consecutive_losses_today,
                 daily_kill_switch_active=daily_kill_switch_active,
                 session_allowed=is_within_session(
                     timestamp,
@@ -1055,6 +1075,8 @@ class BaselineDiagnosticsRunner:
                     start_minute_utc=settings.risk.session_start_minute_utc,
                     end_hour_utc=settings.risk.session_end_hour_utc,
                     end_minute_utc=settings.risk.session_end_minute_utc,
+                    timezone=settings.risk.session_timezone,
+                    session_windows=tuple(settings.risk.session_windows),
                 ),
                 timestamp=timestamp.to_pydatetime(),
             )
@@ -1739,6 +1761,8 @@ class BaselineDiagnosticsRunner:
         return max_losses
 
     def _variant_metric(self, variant_frame: pd.DataFrame, variant: str, column: str) -> float | None:
+        if variant_frame.empty or "variant" not in variant_frame.columns or column not in variant_frame.columns:
+            return None
         row = variant_frame.loc[variant_frame["variant"] == variant]
         return None if row.empty else float(row.iloc[0][column])
 

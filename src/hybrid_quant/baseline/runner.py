@@ -123,7 +123,10 @@ class BaselineRunner:
                 exit_zscore_threshold=self.application.settings.strategy.exit_zscore,
                 session_close_hour_utc=self.application.settings.strategy.session_close_hour_utc,
                 session_close_minute_utc=self.application.settings.strategy.session_close_minute_utc,
+                session_close_timezone=self.application.settings.strategy.session_close_timezone,
+                session_close_windows=tuple(self.application.settings.strategy.entry_session_windows),
                 intrabar_exit_policy=self.application.settings.backtest.intrabar_exit_policy,
+                gap_exit_policy=self.application.settings.backtest.gap_exit_policy,
             )
         )
         validation_report = self.application.validator.validate(result)
@@ -192,11 +195,19 @@ class BaselineRunner:
             fee_bps=settings.backtest.fee_bps,
             slippage_bps=settings.backtest.slippage_bps,
             intrabar_exit_policy=settings.backtest.intrabar_exit_policy,
+            gap_exit_policy=settings.backtest.gap_exit_policy,
+            point_value=settings.backtest.point_value,
+            contract_step=settings.backtest.contract_step,
+            min_contracts=settings.backtest.min_contracts,
+            max_contracts=settings.backtest.max_contracts,
+            fee_per_contract_per_side=settings.backtest.fee_per_contract_per_side,
+            slippage_points=settings.backtest.slippage_points,
         )
 
         day_start_equity = settings.backtest.initial_capital
         current_day: date | None = None
         trades_today = 0
+        consecutive_losses_today = 0
         daily_kill_switch_active = False
         peak_equity = settings.backtest.initial_capital
 
@@ -215,6 +226,7 @@ class BaselineRunner:
                 current_day = timestamp.date()
                 day_start_equity = simulator.equity(bar.open)
                 trades_today = 0
+                consecutive_losses_today = 0
                 daily_kill_switch_active = False
 
             trade = simulator.step(
@@ -224,9 +236,12 @@ class BaselineRunner:
                 exit_zscore_threshold=settings.strategy.exit_zscore,
                 session_close_hour_utc=settings.strategy.session_close_hour_utc,
                 session_close_minute_utc=settings.strategy.session_close_minute_utc,
+                session_close_timezone=settings.strategy.session_close_timezone,
+                session_close_windows=tuple(settings.strategy.entry_session_windows),
             )
             if trade is not None:
                 trades_today += 1
+                consecutive_losses_today = consecutive_losses_today + 1 if trade.net_pnl <= 0.0 else 0
 
             current_equity = simulator.equity(bar.close)
             peak_equity = max(peak_equity, current_equity)
@@ -243,8 +258,14 @@ class BaselineRunner:
                 start_minute_utc=settings.risk.session_start_minute_utc,
                 end_hour_utc=settings.risk.session_end_hour_utc,
                 end_minute_utc=settings.risk.session_end_minute_utc,
+                timezone=settings.risk.session_timezone,
+                session_windows=tuple(settings.risk.session_windows),
             )
-            gross_exposure = (simulator.position.quantity * bar.close) if simulator.position is not None else 0.0
+            gross_exposure = (
+                simulator.position.quantity * bar.close * simulator.position.point_value
+                if simulator.position is not None
+                else 0.0
+            )
             portfolio = PortfolioState(
                 equity=current_equity,
                 cash=simulator.cash,
@@ -254,6 +275,7 @@ class BaselineRunner:
                 peak_equity=peak_equity,
                 total_drawdown_pct=total_drawdown_pct,
                 trades_today=trades_today,
+                consecutive_losses_today=consecutive_losses_today,
                 daily_kill_switch_active=daily_kill_switch_active,
                 session_allowed=session_allowed,
                 timestamp=timestamp.to_pydatetime(),
@@ -309,6 +331,14 @@ class BaselineRunner:
             "max_trades_per_day": settings.risk.max_trades_per_day,
             "max_open_positions": settings.risk.max_open_positions,
             "block_outside_session": settings.risk.block_outside_session,
+            "risk_session_start_utc": (
+                f"{settings.risk.session_start_hour_utc:02d}:{settings.risk.session_start_minute_utc:02d}"
+            ),
+            "risk_session_end_utc": (
+                f"{settings.risk.session_end_hour_utc:02d}:{settings.risk.session_end_minute_utc:02d}"
+            ),
+            "risk_session_timezone": settings.risk.session_timezone,
+            "risk_session_windows": list(settings.risk.session_windows),
             "require_stop_loss": settings.risk.require_stop_loss,
         }
         return filtered_signals, risk_rows, risk_log_lines, risk_summary
@@ -511,6 +541,15 @@ class BaselineRunner:
             "context_session_range_width_atr",
             "entry_mode",
             "entry_trigger",
+            "candidate_status",
+            "blocked_by_filter",
+            "session_gate",
+            "outside_session",
+            "inside_entry_session",
+            "entry_session_window_utc",
+            "entry_session_start_utc",
+            "entry_session_end_utc",
+            "enforce_entry_session",
             "ema_200_1h_slope",
             "relative_volume",
             "intraday_vwap",
@@ -519,6 +558,35 @@ class BaselineRunner:
             "momentum",
             "target_to_cost_ratio",
             "expected_move_bps",
+            "setup_label",
+            "macro_regime",
+            "macro_bias_side",
+            "macro_bias_label",
+            "macro_adx_1h",
+            "macro_ema_200_1h",
+            "macro_price_vs_ema_200_1h_pct",
+            "macro_context_reason",
+            "anchor_distance_atr",
+            "compression_width_atr",
+            "zscore_distance_to_mean",
+            "abs_entry_zscore",
+            "setup_family",
+            "setup_variant",
+            "uses_macd",
+            "uses_m1_trigger",
+            "trend_pullback_bias_m15",
+            "trend_pullback_rsi_m5",
+            "trend_pullback_rsi_m1",
+            "trend_pullback_atr_m5",
+            "trend_pullback_vwap_distance_atr_m5",
+            "trend_pullback_macd_hist_m5",
+            "stop_distance",
+            "stop_distance_atr",
+            "target_r_multiple",
+            "spread_points",
+            "spread_to_stop",
+            "entry_session_windows",
+            "news_filter_status",
         ]
         for signal in signals:
             row = {

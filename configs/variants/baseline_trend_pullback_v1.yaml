@@ -1,0 +1,120 @@
+market:
+  symbol: XAUUSD
+  venue: cfd
+  execution_timeframe: 1m
+  filter_timeframe: 15m
+  style: intraday
+
+data:
+  provider: local_file
+  allow_gaps: true
+
+features:
+  enabled:
+    - atr_14
+    - intraday_vwap
+    - hour_utc
+    - day_of_week
+    - trend_pullback_bias_m15
+    - trend_pullback_ema45_m15
+    - trend_pullback_sma200_m15
+    - trend_pullback_ema45_slope3_m15
+    - trend_pullback_rsi_m5
+    - trend_pullback_rsi_m5_prev
+    - trend_pullback_atr_m5
+    - trend_pullback_vwap_m5
+    - trend_pullback_vwap_distance_atr_m5
+    - trend_pullback_macd_line_m5
+    - trend_pullback_macd_signal_m5
+    - trend_pullback_macd_hist_m5
+    - trend_pullback_macd_hist_prev_m5
+    - trend_pullback_setup_long_core
+    - trend_pullback_setup_short_core
+    - trend_pullback_setup_long_macd
+    - trend_pullback_setup_short_macd
+    - trend_pullback_trigger_long_core
+    - trend_pullback_trigger_short_core
+    - trend_pullback_trigger_long_macd
+    - trend_pullback_trigger_short_macd
+    - trend_pullback_rsi_m1
+    - trend_pullback_stop_long
+    - trend_pullback_stop_short
+    - trend_pullback_stop_distance_long
+    - trend_pullback_stop_distance_short
+
+strategy:
+  family: baseline_trend_pullback_v1
+  name: trend_pullback_continuation_xauusd
+  variant_name: baseline_trend_pullback_v1
+  entry_mode: core_v1
+  signal_cooldown_bars: 1
+  exit_zscore: null
+  atr_multiple_target: 2.0
+  time_stop_bars: 60
+  close_on_session_end: true
+  session_close_timezone: Europe/Madrid
+  session_close_hour_utc: 16
+  session_close_minute_utc: 30
+  no_entry_minutes_before_close: 5
+  enforce_entry_session: true
+  entry_session_timezone: Europe/Madrid
+  entry_session_windows:
+    - "09:00-11:00"
+    - "14:00-16:30"
+  entry_session_start_hour_utc: 9
+  entry_session_start_minute_utc: 0
+  entry_session_end_hour_utc: 16
+  entry_session_end_minute_utc: 30
+  allowed_weekdays: [0, 1, 2, 3, 4]
+  exclude_weekends: true
+  pullback_lookback_bars: 8
+  trigger_lifetime_bars: 10
+  trigger_breakout_lookback_bars: 3
+  stop_m1_lookback_bars: 5
+  stop_m5_lookback_bars: 3
+  stop_buffer_atr: 0.10
+  minimum_stop_atr: 0.60
+  maximum_stop_atr: 1.50
+  maximum_vwap_distance_atr: 0.80
+  default_spread_points: 0.10
+  maximum_spread_points: 0.30
+  maximum_spread_to_stop_ratio: 0.12
+  use_macd_confirmation: false
+  use_m1_trigger: true
+  news_filter_enabled: false
+  news_block_minutes_before: 15
+  news_block_minutes_after: 15
+
+risk:
+  max_risk_per_trade: 0.005
+  max_daily_loss: 0.015
+  max_total_drawdown: 0.08
+  daily_kill_switch: true
+  max_trades_per_day: 2
+  max_consecutive_losses_per_day: 2
+  max_open_positions: 1
+  max_leverage: 5.0
+  block_outside_session: true
+  session_timezone: Europe/Madrid
+  session_windows:
+    - "09:00-11:00"
+    - "14:00-16:30"
+  session_start_hour_utc: 9
+  session_start_minute_utc: 0
+  session_end_hour_utc: 16
+  session_end_minute_utc: 30
+  require_stop_loss: true
+  prop_firm_mode: true
+
+backtest:
+  initial_capital: 100000.0
+  fee_bps: 0.0
+  slippage_bps: 0.0
+  fee_per_contract_per_side: 3.5
+  slippage_points: 0.05
+  point_value: 100.0
+  contract_step: 0.01
+  min_contracts: 0.01
+  max_contracts: 5.0
+  intrabar_exit_policy: conservative
+  gap_exit_policy: open

@@ -86,6 +86,93 @@ class PropFirmRiskEngineTests(unittest.TestCase):
         self.assertFalse(decision.approved)
         self.assertEqual(decision.reason_code, "outside_session")
 
+    def test_blocks_nq_baseline_entries_outside_14_to_19_window(self) -> None:
+        engine = PropFirmRiskEngine(
+            block_outside_session=True,
+            session_start_hour_utc=14,
+            session_start_minute_utc=0,
+            session_end_hour_utc=19,
+            session_end_minute_utc=0,
+        )
+
+        before_open = engine.evaluate(
+            _signal(timestamp=datetime(2024, 1, 1, 13, 55, tzinfo=UTC)),
+            PortfolioState(),
+        )
+        inside = engine.evaluate(
+            _signal(timestamp=datetime(2024, 1, 1, 14, 0, tzinfo=UTC)),
+            PortfolioState(),
+        )
+        after_close = engine.evaluate(
+            _signal(timestamp=datetime(2024, 1, 1, 19, 5, tzinfo=UTC)),
+            PortfolioState(),
+        )
+
+        self.assertEqual(before_open.reason_code, "outside_session")
+        self.assertTrue(inside.approved)
+        self.assertEqual(after_close.reason_code, "outside_session")
+
+    def test_blocks_outside_multiple_madrid_session_windows(self) -> None:
+        engine = PropFirmRiskEngine(
+            block_outside_session=True,
+            session_timezone="Europe/Madrid",
+            session_windows=["09:00-11:00", "14:00-16:30"],
+        )
+
+        morning = engine.evaluate(
+            _signal(timestamp=datetime(2024, 1, 2, 8, 15, tzinfo=UTC)),
+            PortfolioState(),
+        )
+        lunch = engine.evaluate(
+            _signal(timestamp=datetime(2024, 1, 2, 11, 30, tzinfo=UTC)),
+            PortfolioState(),
+        )
+        afternoon = engine.evaluate(
+            _signal(timestamp=datetime(2024, 1, 2, 14, 15, tzinfo=UTC)),
+            PortfolioState(),
+        )
+
+        self.assertTrue(morning.approved)
+        self.assertEqual(lunch.reason_code, "outside_session")
+        self.assertTrue(afternoon.approved)
+
+    def test_blocks_after_configured_consecutive_losses_per_day(self) -> None:
+        engine = PropFirmRiskEngine(max_consecutive_losses_per_day=2)
+        decision = engine.evaluate(
+            _signal(timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=UTC)),
+            PortfolioState(consecutive_losses_today=2),
+        )
+
+        self.assertFalse(decision.approved)
+        self.assertEqual(decision.reason_code, "max_consecutive_losses_per_day")
+
+    def test_session_filter_can_use_new_york_timezone_with_dst(self) -> None:
+        engine = PropFirmRiskEngine(
+            block_outside_session=True,
+            session_start_hour_utc=9,
+            session_start_minute_utc=30,
+            session_end_hour_utc=14,
+            session_end_minute_utc=30,
+            session_timezone="America/New_York",
+        )
+
+        inside_summer = engine.evaluate(
+            _signal(timestamp=datetime(2024, 7, 1, 13, 35, tzinfo=UTC)),
+            PortfolioState(),
+        )
+        outside_summer = engine.evaluate(
+            _signal(timestamp=datetime(2024, 7, 1, 13, 25, tzinfo=UTC)),
+            PortfolioState(),
+        )
+        inside_winter = engine.evaluate(
+            _signal(timestamp=datetime(2024, 1, 2, 14, 35, tzinfo=UTC)),
+            PortfolioState(),
+        )
+
+        self.assertTrue(inside_summer.approved)
+        self.assertEqual(outside_summer.reason_code, "outside_session")
+        self.assertTrue(inside_winter.approved)
+
     def test_blocks_trade_after_daily_limit_and_kill_switch(self) -> None:
         engine = PropFirmRiskEngine(
             max_daily_loss=0.02,

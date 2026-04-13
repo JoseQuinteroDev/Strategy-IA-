@@ -34,6 +34,13 @@ class IntradayBacktestEngine(BacktestEngine):
     slippage_bps: float
     latency_ms: int
     intrabar_exit_policy: str = "conservative"
+    gap_exit_policy: str = "level"
+    point_value: float = 1.0
+    contract_step: float = 0.0
+    min_contracts: float = 0.0
+    max_contracts: float | None = None
+    fee_per_contract_per_side: float = 0.0
+    slippage_points: float = 0.0
 
     def run(self, request: BacktestRequest) -> BacktestResult:
         intrabar_policy = resolve_intrabar_policy(request.intrabar_exit_policy, self.intrabar_exit_policy)
@@ -64,6 +71,13 @@ class IntradayBacktestEngine(BacktestEngine):
             fee_bps=self.fee_bps,
             slippage_bps=self.slippage_bps,
             intrabar_exit_policy=intrabar_policy,
+            gap_exit_policy=request.gap_exit_policy or self.gap_exit_policy,
+            point_value=self.point_value,
+            contract_step=self.contract_step,
+            min_contracts=self.min_contracts,
+            max_contracts=self.max_contracts,
+            fee_per_contract_per_side=self.fee_per_contract_per_side,
+            slippage_points=self.slippage_points,
         )
         trades: list[ExecutedTrade] = []
         equity_points: list[tuple[pd.Timestamp, float]] = []
@@ -78,6 +92,8 @@ class IntradayBacktestEngine(BacktestEngine):
                 exit_zscore_threshold=request.exit_zscore_threshold,
                 session_close_hour_utc=request.session_close_hour_utc,
                 session_close_minute_utc=request.session_close_minute_utc,
+                session_close_timezone=request.session_close_timezone,
+                session_close_windows=request.session_close_windows,
             )
             if trade is not None:
                 trades.append(trade)
@@ -136,9 +152,16 @@ class IntradayBacktestEngine(BacktestEngine):
                 "initial_capital": initial_capital,
                 "fees_bps": self.fee_bps,
                 "slippage_bps": self.slippage_bps,
+                "fee_per_contract_per_side": self.fee_per_contract_per_side,
+                "slippage_points": self.slippage_points,
+                "point_value": self.point_value,
+                "contract_step": self.contract_step,
+                "min_contracts": self.min_contracts,
+                "max_contracts": self.max_contracts,
                 "latency_ms": self.latency_ms,
                 "mode": "baseline",
                 "intrabar_exit_policy": intrabar_policy,
+                "gap_exit_policy": request.gap_exit_policy or self.gap_exit_policy,
                 "equity_curve": [
                     {"timestamp": timestamp.isoformat(), "equity": equity}
                     for timestamp, equity in equity_points

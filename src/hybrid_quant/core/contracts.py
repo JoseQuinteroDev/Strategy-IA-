@@ -73,6 +73,7 @@ class PortfolioState:
     peak_equity: float = 100000.0
     total_drawdown_pct: float = 0.0
     trades_today: int = 0
+    consecutive_losses_today: int = 0
     daily_kill_switch_active: bool = False
     session_allowed: bool = True
     timestamp: datetime | None = None
@@ -102,7 +103,10 @@ class BacktestRequest:
     exit_zscore_threshold: float | None = None
     session_close_hour_utc: int = 23
     session_close_minute_utc: int = 55
+    session_close_timezone: str = "UTC"
+    session_close_windows: Sequence[str] = field(default_factory=tuple)
     intrabar_exit_policy: str | None = None
+    gap_exit_policy: str | None = None
 
 
 @dataclass(slots=True)

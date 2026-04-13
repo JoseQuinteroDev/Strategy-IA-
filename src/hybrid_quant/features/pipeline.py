@@ -34,7 +34,11 @@ class FeaturePipeline:
                 for bar in batch.bars
             ]
         )
-        feature_frame = build_features(frame, config=self.deterministic_config)
+        feature_frame = build_features(
+            frame,
+            config=self.deterministic_config,
+            feature_names=self.feature_names,
+        )
         selected_frame = feature_frame
         if self.feature_names:
             missing = [name for name in self.feature_names if name not in feature_frame.columns]

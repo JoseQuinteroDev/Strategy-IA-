@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -37,17 +38,26 @@ class DeterministicFeatureConfig:
     maximum_context_compression_width_atr: float = 1.5
     require_context_vwap_structure: bool = True
     require_context_or_mid_structure: bool = True
+    trend_pullback_pullback_lookback_bars: int = 8
+    trend_pullback_trigger_lifetime_bars: int = 10
+    trend_pullback_trigger_breakout_lookback_bars: int = 3
+    trend_pullback_stop_m1_lookback_bars: int = 5
+    trend_pullback_stop_m5_lookback_bars: int = 3
+    trend_pullback_stop_buffer_atr: float = 0.10
+    trend_pullback_maximum_vwap_distance_atr: float = 0.80
 
 
 def build_features(
     df: pd.DataFrame,
     *,
     config: DeterministicFeatureConfig | None = None,
+    feature_names: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Build deterministic multi-timeframe features aligned to the intraday index."""
 
     cfg = config or DeterministicFeatureConfig()
     frame = _prepare_ohlcv_frame(df)
+    requested = set(feature_names or ())
 
     features = pd.DataFrame(index=frame.index)
     log_return = np.log(frame["close"]).diff()
@@ -121,11 +131,21 @@ def build_features(
         min_periods=max(10, cfg.zscore_window // 2),
     ).std(ddof=0)
     features["zscore_distance_to_mean"] = distance_to_mean / rolling_distance_std.replace(0.0, np.nan)
-    features = pd.concat([features, _opening_range_features(frame, atr, cfg=cfg)], axis=1)
-    features = pd.concat([features, _intraday_contextual_features(frame, features, atr, cfg=cfg)], axis=1)
+    if _requested_feature_family(requested, ("opening_range_",)):
+        features = pd.concat([features, _opening_range_features(frame, atr, cfg=cfg)], axis=1)
+    if _requested_feature_family(requested, ("context_",)):
+        features = pd.concat([features, _intraday_contextual_features(frame, features, atr, cfg=cfg)], axis=1)
+    if _requested_feature_family(requested, ("trend_pullback_",)):
+        features = pd.concat([features, _trend_pullback_features(frame, cfg=cfg)], axis=1)
 
     features = pd.concat([features, _temporal_features(frame.index)], axis=1)
     return features
+
+
+def _requested_feature_family(requested: set[str], prefixes: tuple[str, ...]) -> bool:
+    if not requested:
+        return True
+    return any(any(name.startswith(prefix) for prefix in prefixes) for name in requested)
 
 
 def _prepare_ohlcv_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -990,6 +1010,233 @@ def _intraday_contextual_features(
                 )
 
     return features
+
+
+def _trend_pullback_features(frame: pd.DataFrame, *, cfg: DeterministicFeatureConfig) -> pd.DataFrame:
+    features = pd.DataFrame(index=frame.index)
+    defaults = {
+        "trend_pullback_bias_m15": 0.0,
+        "trend_pullback_ema45_m15": np.nan,
+        "trend_pullback_sma200_m15": np.nan,
+        "trend_pullback_ema45_slope3_m15": np.nan,
+        "trend_pullback_rsi_m5": np.nan,
+        "trend_pullback_rsi_m5_prev": np.nan,
+        "trend_pullback_atr_m5": np.nan,
+        "trend_pullback_vwap_m5": np.nan,
+        "trend_pullback_vwap_distance_atr_m5": np.nan,
+        "trend_pullback_macd_line_m5": np.nan,
+        "trend_pullback_macd_signal_m5": np.nan,
+        "trend_pullback_macd_hist_m5": np.nan,
+        "trend_pullback_macd_hist_prev_m5": np.nan,
+        "trend_pullback_setup_long_core": 0.0,
+        "trend_pullback_setup_short_core": 0.0,
+        "trend_pullback_setup_long_macd": 0.0,
+        "trend_pullback_setup_short_macd": 0.0,
+        "trend_pullback_trigger_long_core": 0.0,
+        "trend_pullback_trigger_short_core": 0.0,
+        "trend_pullback_trigger_long_macd": 0.0,
+        "trend_pullback_trigger_short_macd": 0.0,
+        "trend_pullback_rsi_m1": np.nan,
+        "trend_pullback_stop_long": np.nan,
+        "trend_pullback_stop_short": np.nan,
+        "trend_pullback_stop_distance_long": np.nan,
+        "trend_pullback_stop_distance_short": np.nan,
+        "trend_pullback_spread_points": np.nan,
+    }
+    for column, default in defaults.items():
+        features[column] = default
+    if frame.empty:
+        return features
+
+    m5 = _resample_ohlcv(frame, "5min")
+    m15 = _resample_ohlcv(frame, "15min")
+    if m5.empty or m15.empty:
+        return features
+
+    m15_ema45 = m15["close"].ewm(span=45, adjust=False, min_periods=1).mean()
+    m15_sma200 = m15["close"].rolling(200, min_periods=50).mean()
+    m15_slope3 = m15_ema45.diff(3)
+    m15_bias = pd.Series(0.0, index=m15.index)
+    m15_bias.loc[(m15["close"] > m15_ema45) & (m15_ema45 > m15_sma200) & (m15_slope3 > 0.0)] = 1.0
+    m15_bias.loc[(m15["close"] < m15_ema45) & (m15_ema45 < m15_sma200) & (m15_slope3 < 0.0)] = -1.0
+
+    m5_atr = _atr(m5, window=14)
+    m5_rsi = _rsi(m5["close"], window=14)
+    m5_vwap = _intraday_vwap(m5)
+    macd_line, macd_signal, macd_hist = _macd(m5["close"])
+    long_pullback = m5_rsi.rolling(cfg.trend_pullback_pullback_lookback_bars, min_periods=1).min() <= 45.0
+    short_pullback = m5_rsi.rolling(cfg.trend_pullback_pullback_lookback_bars, min_periods=1).max() >= 55.0
+    m5_bias = m15_bias.reindex(m5.index, method="ffill")
+    vwap_distance_atr = (m5["close"] - m5_vwap).abs() / m5_atr.replace(0.0, np.nan)
+    max_vwap_distance = float(cfg.trend_pullback_maximum_vwap_distance_atr)
+    setup_long_core = (
+        (m5_bias == 1.0)
+        & long_pullback
+        & (m5_rsi > 50.0)
+        & (m5_rsi > m5_rsi.shift(1))
+        & (m5["close"] > m5_vwap)
+        & (vwap_distance_atr <= max_vwap_distance)
+    )
+    setup_short_core = (
+        (m5_bias == -1.0)
+        & short_pullback
+        & (m5_rsi < 50.0)
+        & (m5_rsi < m5_rsi.shift(1))
+        & (m5["close"] < m5_vwap)
+        & (vwap_distance_atr <= max_vwap_distance)
+    )
+    setup_long_macd = setup_long_core & (macd_line >= macd_signal) & (macd_hist > macd_hist.shift(1))
+    setup_short_macd = setup_short_core & (macd_line <= macd_signal) & (macd_hist < macd_hist.shift(1))
+
+    for column, series in {
+        "trend_pullback_bias_m15": m15_bias,
+        "trend_pullback_ema45_m15": m15_ema45,
+        "trend_pullback_sma200_m15": m15_sma200,
+        "trend_pullback_ema45_slope3_m15": m15_slope3,
+        "trend_pullback_rsi_m5": m5_rsi,
+        "trend_pullback_rsi_m5_prev": m5_rsi.shift(1),
+        "trend_pullback_atr_m5": m5_atr,
+        "trend_pullback_vwap_m5": m5_vwap,
+        "trend_pullback_vwap_distance_atr_m5": vwap_distance_atr,
+        "trend_pullback_macd_line_m5": macd_line,
+        "trend_pullback_macd_signal_m5": macd_signal,
+        "trend_pullback_macd_hist_m5": macd_hist,
+        "trend_pullback_macd_hist_prev_m5": macd_hist.shift(1),
+    }.items():
+        features[column] = series.reindex(frame.index, method="ffill")
+
+    setup_long_core_m1 = setup_long_core.astype(float).reindex(frame.index).fillna(0.0)
+    setup_short_core_m1 = setup_short_core.astype(float).reindex(frame.index).fillna(0.0)
+    setup_long_macd_m1 = setup_long_macd.astype(float).reindex(frame.index).fillna(0.0)
+    setup_short_macd_m1 = setup_short_macd.astype(float).reindex(frame.index).fillna(0.0)
+    features["trend_pullback_setup_long_core"] = setup_long_core_m1
+    features["trend_pullback_setup_short_core"] = setup_short_core_m1
+    features["trend_pullback_setup_long_macd"] = setup_long_macd_m1
+    features["trend_pullback_setup_short_macd"] = setup_short_macd_m1
+
+    rsi_m1 = _rsi(frame["close"], window=14)
+    features["trend_pullback_rsi_m1"] = rsi_m1
+    prior_high_3 = frame["high"].rolling(cfg.trend_pullback_trigger_breakout_lookback_bars, min_periods=1).max().shift(1)
+    prior_low_3 = frame["low"].rolling(cfg.trend_pullback_trigger_breakout_lookback_bars, min_periods=1).min().shift(1)
+    m1_low = frame["low"].rolling(cfg.trend_pullback_stop_m1_lookback_bars, min_periods=1).min().shift(1)
+    m1_high = frame["high"].rolling(cfg.trend_pullback_stop_m1_lookback_bars, min_periods=1).max().shift(1)
+    m5_low = m5["low"].rolling(cfg.trend_pullback_stop_m5_lookback_bars, min_periods=1).min().reindex(frame.index, method="ffill")
+    m5_high = m5["high"].rolling(cfg.trend_pullback_stop_m5_lookback_bars, min_periods=1).max().reindex(frame.index, method="ffill")
+    atr_m5 = features["trend_pullback_atr_m5"]
+    stop_buffer = float(cfg.trend_pullback_stop_buffer_atr)
+    long_stop = pd.concat([m1_low, m5_low], axis=1).min(axis=1) - (stop_buffer * atr_m5)
+    short_stop = pd.concat([m1_high, m5_high], axis=1).max(axis=1) + (stop_buffer * atr_m5)
+    features["trend_pullback_stop_long"] = long_stop
+    features["trend_pullback_stop_short"] = short_stop
+    features["trend_pullback_stop_distance_long"] = frame["close"] - long_stop
+    features["trend_pullback_stop_distance_short"] = short_stop - frame["close"]
+
+    _populate_triggers(
+        features=features,
+        frame=frame,
+        rsi_m1=rsi_m1,
+        prior_high_3=prior_high_3,
+        prior_low_3=prior_low_3,
+        setup_long_column="trend_pullback_setup_long_core",
+        setup_short_column="trend_pullback_setup_short_core",
+        trigger_long_column="trend_pullback_trigger_long_core",
+        trigger_short_column="trend_pullback_trigger_short_core",
+        lifetime=cfg.trend_pullback_trigger_lifetime_bars,
+    )
+    _populate_triggers(
+        features=features,
+        frame=frame,
+        rsi_m1=rsi_m1,
+        prior_high_3=prior_high_3,
+        prior_low_3=prior_low_3,
+        setup_long_column="trend_pullback_setup_long_macd",
+        setup_short_column="trend_pullback_setup_short_macd",
+        trigger_long_column="trend_pullback_trigger_long_macd",
+        trigger_short_column="trend_pullback_trigger_short_macd",
+        lifetime=cfg.trend_pullback_trigger_lifetime_bars,
+    )
+    return features
+
+
+def _resample_ohlcv(frame: pd.DataFrame, rule: str) -> pd.DataFrame:
+    resampled = frame.resample(rule, label="right", closed="left").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    )
+    return resampled.dropna(subset=["open", "high", "low", "close"])
+
+
+def _rsi(close: pd.Series, *, window: int) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0.0)
+    loss = -delta.clip(upper=0.0)
+    avg_gain = gain.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    avg_loss = loss.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    rs = avg_gain / avg_loss.replace(0.0, np.nan)
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _macd(close: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
+    fast = close.ewm(span=12, adjust=False, min_periods=1).mean()
+    slow = close.ewm(span=26, adjust=False, min_periods=1).mean()
+    line = fast - slow
+    signal = line.ewm(span=9, adjust=False, min_periods=1).mean()
+    return line, signal, line - signal
+
+
+def _populate_triggers(
+    *,
+    features: pd.DataFrame,
+    frame: pd.DataFrame,
+    rsi_m1: pd.Series,
+    prior_high_3: pd.Series,
+    prior_low_3: pd.Series,
+    setup_long_column: str,
+    setup_short_column: str,
+    trigger_long_column: str,
+    trigger_short_column: str,
+    lifetime: int,
+) -> None:
+    active_long_until: int | None = None
+    active_short_until: int | None = None
+    setup_long_values = features[setup_long_column].to_numpy()
+    setup_short_values = features[setup_short_column].to_numpy()
+    closes = frame["close"].to_numpy()
+    rsi_values = rsi_m1.to_numpy()
+    prior_high_values = prior_high_3.to_numpy()
+    prior_low_values = prior_low_3.to_numpy()
+    for position in range(len(frame)):
+        if setup_long_values[position] > 0.0:
+            active_long_until = position + lifetime
+            active_short_until = None
+        if setup_short_values[position] > 0.0:
+            active_short_until = position + lifetime
+            active_long_until = None
+        if active_long_until is not None and position > active_long_until:
+            active_long_until = None
+        if active_short_until is not None and position > active_short_until:
+            active_short_until = None
+        if position == 0:
+            continue
+        long_trigger = (
+            active_long_until is not None
+            and setup_long_values[position] == 0.0
+            and rsi_values[position - 1] <= 55.0
+            and rsi_values[position] > 55.0
+            and closes[position] > prior_high_values[position]
+        )
+        short_trigger = (
+            active_short_until is not None
+            and setup_short_values[position] == 0.0
+            and rsi_values[position - 1] >= 45.0
+            and rsi_values[position] < 45.0
+            and closes[position] < prior_low_values[position]
+        )
+        if long_trigger:
+            features.iat[position, features.columns.get_loc(trigger_long_column)] = 1.0
+            active_long_until = None
+        if short_trigger:
+            features.iat[position, features.columns.get_loc(trigger_short_column)] = 1.0
+            active_short_until = None
 
 
 def _temporal_features(index: pd.DatetimeIndex) -> pd.DataFrame:

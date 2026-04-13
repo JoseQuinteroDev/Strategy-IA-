@@ -1,0 +1,149 @@
+market:
+  symbol: MNQ
+  venue: cme
+  execution_timeframe: 5m
+  filter_timeframe: 1H
+  style: intraday
+
+data:
+  provider: local_file
+  allow_gaps: true
+
+features:
+  enabled:
+    - atr_14
+    - adx_1h
+    - ema_200_1h
+    - ema_200_1h_slope
+    - price_vs_ema_200_1h_pct
+    - intraday_vwap
+    - ema_20
+    - ema_50
+    - distance_to_mean
+    - zscore_distance_to_mean
+    - candle_range
+    - candle_range_pct
+    - candle_range_atr
+    - momentum_20
+    - relative_volume
+    - opening_range_high
+    - opening_range_low
+    - opening_range_mid
+    - opening_range_width
+    - opening_range_width_atr
+    - opening_range_ready
+    - context_bias_side
+    - context_long_pullback_entry
+    - context_short_pullback_entry
+    - context_long_reclaim_entry
+    - context_short_reclaim_entry
+    - context_long_session_trend_entry
+    - context_short_session_trend_entry
+    - context_support_level
+    - context_trigger_level
+    - context_support_distance_atr
+    - context_trigger_distance_atr
+    - context_session_high_so_far
+    - context_session_low_so_far
+    - context_session_range_width_atr
+    - context_setup_count_today
+    - context_first_setup_of_day
+    - hour_utc
+    - day_of_week
+    - session_us
+  ema_slope_lookback_hours: 3
+  relative_volume_lookback_sessions: 20
+
+strategy:
+  family: intraday_hybrid_contextual
+  name: intraday_hybrid_contextual_nq
+  variant_name: baseline_intraday_hybrid
+  trend_filter: ema_200_1h
+  regime_filter: macro_context
+  entry_mode: macro_pullback_continuation
+  opening_range_minutes: 30
+  retest_max_bars: 6
+  signal_cooldown_bars: 1
+  exit_zscore: null
+  entry_zscore: 2.0
+  mean_reversion_anchor: vwap
+  adx_threshold: 22.0
+  momentum_lookback_bars: 20
+  breakout_buffer_atr: 0.06
+  atr_multiple_stop: 1.0
+  atr_multiple_target: 2.0
+  time_stop_bars: 12
+  close_on_session_end: true
+  session_close_timezone: UTC
+  enforce_entry_session: true
+  entry_session_start_hour_utc: 14
+  entry_session_start_minute_utc: 0
+  entry_session_end_hour_utc: 19
+  entry_session_end_minute_utc: 0
+  entry_session_timezone: UTC
+  use_ema_200_1h_trend_filter: true
+  use_ema_200_1h_slope: true
+  use_macro_bias_filter: true
+  ema_200_1h_slope_tolerance: 0.0
+  use_intraday_vwap_filter: true
+  use_intraday_ema20_filter: true
+  use_intraday_ema50_alignment: true
+  use_opening_range_mid_filter: false
+  session_trend_structure_lookback_bars: 3
+  maximum_context_compression_width_atr: 1.5
+  require_context_vwap_structure: true
+  require_context_or_mid_structure: false
+  session_close_hour_utc: 20
+  session_close_minute_utc: 55
+  no_entry_minutes_before_close: 15
+  allowed_weekdays:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+  allowed_hours_utc:
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+  exclude_weekends: true
+  minimum_expected_move_bps: 5.0
+  minimum_target_to_cost_ratio: 1.20
+  minimum_momentum_abs: 0.0006
+  minimum_candle_range_atr: 0.25
+  minimum_anchor_distance_atr: 0.45
+  minimum_relative_volume: 0.60
+  max_breakout_distance_atr: 0.85
+  maximum_pullback_depth_atr: 0.85
+  max_breakouts_per_day: 4
+
+risk:
+  max_risk_per_trade: 0.0025
+  max_daily_loss: 0.025
+  max_total_drawdown: 0.08
+  daily_kill_switch: true
+  max_trades_per_day: 4
+  max_open_positions: 1
+  max_leverage: 2.0
+  block_outside_session: true
+  session_start_hour_utc: 14
+  session_start_minute_utc: 0
+  session_end_hour_utc: 19
+  session_end_minute_utc: 0
+  session_timezone: UTC
+  require_stop_loss: true
+  prop_firm_mode: true
+
+backtest:
+  fee_bps: 0.0
+  slippage_bps: 0.0
+  fee_per_contract_per_side: 1.00
+  slippage_points: 0.25
+  point_value: 2.0
+  contract_step: 1.0
+  min_contracts: 1.0
+  max_contracts: 20.0
+  intrabar_exit_policy: conservative
+  gap_exit_policy: open

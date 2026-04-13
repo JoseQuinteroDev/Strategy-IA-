@@ -1,0 +1,73 @@
+name: trend_pullback_v1_research
+base_variant: baseline_trend_pullback_v1
+
+summary_thresholds:
+  minimum_profit_factor: 1.10
+  minimum_expectancy: 0.0
+  maximum_drawdown: 0.08
+  maximum_daily_loss_pct: 0.015
+  minimum_positive_year_ratio: 0.50
+  minimum_positive_quarter_ratio: 0.40
+  minimum_positive_split_ratio: 0.50
+  minimum_trades: 30
+
+temporal_splits:
+  train_ratio: 0.60
+  validation_ratio: 0.20
+  test_ratio: 0.20
+
+variants:
+  - name: core_v1
+    label: "Core V1: M15 bias + M5 RSI/VWAP pullback + M1 trigger, TP 2R"
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: core_v1
+        variant_name: core_v1
+        use_macd_confirmation: false
+        use_m1_trigger: true
+        atr_multiple_target: 2.0
+
+  - name: core_v1_macd
+    label: "Core V1 MACD: adds M5 MACD confirmation, TP 2R"
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: core_v1_macd
+        variant_name: core_v1_macd
+        use_macd_confirmation: true
+        use_m1_trigger: true
+        atr_multiple_target: 2.0
+
+  - name: core_v1_no_m1
+    label: "Core V1 no M1 trigger: enters next M5-equivalent setup bar, TP 2R"
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: core_v1_no_m1
+        variant_name: core_v1_no_m1
+        use_macd_confirmation: false
+        use_m1_trigger: false
+        atr_multiple_target: 2.0
+
+  - name: core_v1_tp_1p5
+    label: "Core V1: same trigger with TP 1.5R"
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: core_v1
+        variant_name: core_v1_tp_1p5
+        use_macd_confirmation: false
+        use_m1_trigger: true
+        atr_multiple_target: 1.5
+
+  - name: core_v1_macd_tp_1p5
+    label: "Core V1 MACD: TP 1.5R diagnostic"
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: core_v1_macd
+        variant_name: core_v1_macd_tp_1p5
+        use_macd_confirmation: true
+        use_m1_trigger: true
+        atr_multiple_target: 1.5

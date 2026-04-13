@@ -1,0 +1,188 @@
+name: intraday_hybrid_research
+base_variant: baseline_intraday_hybrid
+
+summary_thresholds:
+  minimum_profit_factor: 1.10
+  minimum_expectancy: 0.0
+  maximum_drawdown: 0.08
+  maximum_daily_loss_pct: 0.025
+  minimum_positive_year_ratio: 0.50
+  minimum_positive_quarter_ratio: 0.40
+  minimum_positive_split_ratio: 0.50
+  minimum_trades: 40
+
+temporal_splits:
+  train_ratio: 0.60
+  validation_ratio: 0.20
+  test_ratio: 0.20
+
+variants:
+  - name: legacy_orb_control
+    label: Legacy ORB control
+    candidate: false
+    source_variant: baseline_nq_orb
+    overrides: {}
+
+  - name: legacy_session_trend_control
+    label: Legacy contextual session-trend control
+    candidate: false
+    source_variant: session_trend_30m
+    overrides: {}
+
+  - name: hybrid_pullback_value
+    label: Macro trend pullback into VWAP/EMA value
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: macro_pullback_continuation
+        atr_multiple_stop: 1.0
+        atr_multiple_target: 1.5
+        time_stop_bars: 12
+        use_ema_200_1h_trend_filter: true
+        use_ema_200_1h_slope: true
+        use_intraday_vwap_filter: true
+        use_intraday_ema20_filter: true
+        use_intraday_ema50_alignment: true
+        minimum_momentum_abs: 0.0006
+        minimum_candle_range_atr: 0.25
+        minimum_relative_volume: 0.60
+        maximum_pullback_depth_atr: 0.85
+        max_breakout_distance_atr: 0.85
+      risk:
+        max_trades_per_day: 4
+
+  - name: hybrid_pullback_flexible_htf
+    label: Pullback with flexible HTF slope
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: macro_pullback_continuation
+        atr_multiple_stop: 1.0
+        atr_multiple_target: 1.5
+        time_stop_bars: 12
+        use_ema_200_1h_trend_filter: true
+        use_ema_200_1h_slope: false
+        minimum_momentum_abs: 0.0007
+        minimum_candle_range_atr: 0.30
+        minimum_relative_volume: 0.60
+        maximum_pullback_depth_atr: 0.75
+        max_breakout_distance_atr: 0.75
+      risk:
+        max_trades_per_day: 4
+
+  - name: hybrid_pullback_2r
+    label: Macro pullback with wider 2R target
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: macro_pullback_continuation
+        atr_multiple_stop: 1.0
+        atr_multiple_target: 2.0
+        time_stop_bars: 12
+        use_ema_200_1h_trend_filter: true
+        use_ema_200_1h_slope: true
+        use_intraday_vwap_filter: true
+        use_intraday_ema20_filter: true
+        use_intraday_ema50_alignment: true
+        minimum_momentum_abs: 0.0006
+        minimum_candle_range_atr: 0.25
+        minimum_relative_volume: 0.60
+        maximum_pullback_depth_atr: 0.85
+        max_breakout_distance_atr: 0.85
+      risk:
+        max_trades_per_day: 4
+
+  - name: hybrid_mean_reversion_controlled
+    label: Controlled VWAP mean reversion in range regimes
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: controlled_mean_reversion
+        exit_zscore: 0.25
+        entry_zscore: 2.0
+        mean_reversion_anchor: vwap
+        adx_threshold: 20.0
+        atr_multiple_stop: 0.9
+        atr_multiple_target: 1.1
+        time_stop_bars: 8
+        use_ema_200_1h_trend_filter: false
+        use_ema_200_1h_slope: false
+        use_intraday_ema50_alignment: false
+        minimum_anchor_distance_atr: 0.55
+        minimum_momentum_abs: 0.0
+        minimum_candle_range_atr: 0.20
+        minimum_relative_volume: 0.0
+        max_breakout_distance_atr: 2.50
+      risk:
+        max_trades_per_day: 5
+
+  - name: hybrid_compression_expansion
+    label: Macro-aligned compression then expansion
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: compression_expansion_continuation
+        atr_multiple_stop: 1.0
+        atr_multiple_target: 1.8
+        time_stop_bars: 14
+        use_ema_200_1h_trend_filter: true
+        use_ema_200_1h_slope: true
+        minimum_momentum_abs: 0.0008
+        minimum_candle_range_atr: 0.35
+        minimum_relative_volume: 0.70
+        max_breakout_distance_atr: 0.75
+        maximum_context_compression_width_atr: 1.35
+        require_context_vwap_structure: true
+        require_context_or_mid_structure: false
+      risk:
+        max_trades_per_day: 4
+
+  - name: hybrid_mean_reversion_fast_1r_long_only
+    label: Conservative 1R mean reversion, long side only
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: controlled_mean_reversion
+        allowed_sides:
+          - long
+        exit_zscore: 0.25
+        entry_zscore: 2.2
+        mean_reversion_anchor: vwap
+        adx_threshold: 18.0
+        atr_multiple_stop: 0.8
+        atr_multiple_target: 1.0
+        time_stop_bars: 6
+        use_ema_200_1h_trend_filter: false
+        use_ema_200_1h_slope: false
+        use_intraday_ema50_alignment: false
+        minimum_anchor_distance_atr: 0.65
+        minimum_momentum_abs: 0.0
+        minimum_candle_range_atr: 0.20
+        minimum_relative_volume: 0.0
+        max_breakout_distance_atr: 2.20
+      risk:
+        max_trades_per_day: 4
+
+  - name: hybrid_mean_reversion_fast_1r
+    label: Conservative 1R controlled mean reversion
+    candidate: true
+    overrides:
+      strategy:
+        entry_mode: controlled_mean_reversion
+        exit_zscore: 0.25
+        entry_zscore: 2.2
+        mean_reversion_anchor: vwap
+        adx_threshold: 18.0
+        atr_multiple_stop: 0.8
+        atr_multiple_target: 1.0
+        time_stop_bars: 6
+        use_ema_200_1h_trend_filter: false
+        use_ema_200_1h_slope: false
+        use_intraday_ema50_alignment: false
+        minimum_anchor_distance_atr: 0.65
+        minimum_momentum_abs: 0.0
+        minimum_candle_range_atr: 0.20
+        minimum_relative_volume: 0.0
+        max_breakout_distance_atr: 2.20
+      risk:
+        max_trades_per_day: 4

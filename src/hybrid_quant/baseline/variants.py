@@ -16,6 +16,8 @@ BASELINE_VARIANTS = {
     "baseline_nq_orb": Path("variants") / "baseline_nq_orb.yaml",
     "baseline_nq_intraday_orb_active": Path("variants") / "baseline_nq_intraday_orb_active.yaml",
     "baseline_nq_intraday_contextual": Path("variants") / "baseline_nq_intraday_contextual.yaml",
+    "baseline_intraday_hybrid": Path("variants") / "baseline_intraday_hybrid.yaml",
+    "baseline_trend_pullback_v1": Path("variants") / "baseline_trend_pullback_v1.yaml",
     "session_trend_30m": Path("variants") / "session_trend_30m.yaml",
     "shorts_strict_clean_hours": Path("variants") / "shorts_strict_clean_hours.yaml",
     "long_only_clean_hours": Path("variants") / "long_only_clean_hours.yaml",
@@ -82,6 +84,17 @@ def variant_summary_payload(settings: Settings) -> dict[str, Any]:
         "signal_cooldown_bars": settings.strategy.signal_cooldown_bars,
         "atr_multiple_stop": settings.strategy.atr_multiple_stop,
         "atr_multiple_target": settings.strategy.atr_multiple_target,
+        "time_stop_bars": settings.strategy.time_stop_bars,
+        "close_on_session_end": settings.strategy.close_on_session_end,
+        "enforce_entry_session": settings.strategy.enforce_entry_session,
+        "entry_session_start_utc": (
+            f"{settings.strategy.entry_session_start_hour_utc:02d}:"
+            f"{settings.strategy.entry_session_start_minute_utc:02d}"
+        ),
+        "entry_session_end_utc": (
+            f"{settings.strategy.entry_session_end_hour_utc:02d}:"
+            f"{settings.strategy.entry_session_end_minute_utc:02d}"
+        ),
         "adx_threshold": settings.strategy.adx_threshold,
         "blocked_hours_utc": list(settings.strategy.blocked_hours_utc),
         "allowed_hours_utc": list(settings.strategy.allowed_hours_utc),
@@ -150,6 +163,7 @@ def variant_summary_payload(settings: Settings) -> dict[str, Any]:
                 "minimum_candle_range_atr": settings.strategy.minimum_candle_range_atr,
                 "use_ema_200_1h_trend_filter": settings.strategy.use_ema_200_1h_trend_filter,
                 "use_ema_200_1h_slope": settings.strategy.use_ema_200_1h_slope,
+                "use_macro_bias_filter": settings.strategy.use_macro_bias_filter,
                 "ema_200_1h_slope_tolerance": settings.strategy.ema_200_1h_slope_tolerance,
                 "minimum_opening_range_width_atr": settings.strategy.minimum_opening_range_width_atr,
                 "maximum_opening_range_width_atr": settings.strategy.maximum_opening_range_width_atr,
@@ -165,6 +179,49 @@ def variant_summary_payload(settings: Settings) -> dict[str, Any]:
                 "require_context_vwap_structure": settings.strategy.require_context_vwap_structure,
                 "require_context_or_mid_structure": settings.strategy.require_context_or_mid_structure,
                 "breakout_buffer_atr": settings.strategy.breakout_buffer_atr,
+            }
+        )
+    if settings.strategy.family == "intraday_hybrid_contextual":
+        payload.update(
+            {
+                "entry_mode": settings.strategy.entry_mode,
+                "mean_reversion_anchor": settings.strategy.mean_reversion_anchor,
+                "entry_zscore": settings.strategy.entry_zscore,
+                "adx_threshold": settings.strategy.adx_threshold,
+                "momentum_lookback_bars": settings.strategy.momentum_lookback_bars,
+                "minimum_momentum_abs": settings.strategy.minimum_momentum_abs,
+                "minimum_candle_range_atr": settings.strategy.minimum_candle_range_atr,
+                "minimum_anchor_distance_atr": settings.strategy.minimum_anchor_distance_atr,
+                "minimum_relative_volume": settings.strategy.minimum_relative_volume,
+                "use_ema_200_1h_trend_filter": settings.strategy.use_ema_200_1h_trend_filter,
+                "use_ema_200_1h_slope": settings.strategy.use_ema_200_1h_slope,
+                "use_macro_bias_filter": settings.strategy.use_macro_bias_filter,
+                "ema_200_1h_slope_tolerance": settings.strategy.ema_200_1h_slope_tolerance,
+                "max_breakout_distance_atr": settings.strategy.max_breakout_distance_atr,
+                "maximum_pullback_depth_atr": settings.strategy.maximum_pullback_depth_atr,
+                "max_breakouts_per_day": settings.strategy.max_breakouts_per_day,
+                "use_intraday_vwap_filter": settings.strategy.use_intraday_vwap_filter,
+                "use_intraday_ema20_filter": settings.strategy.use_intraday_ema20_filter,
+                "use_intraday_ema50_alignment": settings.strategy.use_intraday_ema50_alignment,
+                "breakout_buffer_atr": settings.strategy.breakout_buffer_atr,
+            }
+        )
+    if settings.strategy.family == "baseline_trend_pullback_v1":
+        payload.update(
+            {
+                "entry_mode": settings.strategy.entry_mode,
+                "entry_session_timezone": settings.strategy.entry_session_timezone,
+                "entry_session_windows": list(settings.strategy.entry_session_windows),
+                "use_macd_confirmation": settings.strategy.use_macd_confirmation,
+                "use_m1_trigger": settings.strategy.use_m1_trigger,
+                "pullback_lookback_bars": settings.strategy.pullback_lookback_bars,
+                "trigger_lifetime_bars": settings.strategy.trigger_lifetime_bars,
+                "minimum_stop_atr": settings.strategy.minimum_stop_atr,
+                "maximum_stop_atr": settings.strategy.maximum_stop_atr,
+                "maximum_vwap_distance_atr": settings.strategy.maximum_vwap_distance_atr,
+                "default_spread_points": settings.strategy.default_spread_points,
+                "maximum_spread_points": settings.strategy.maximum_spread_points,
+                "maximum_spread_to_stop_ratio": settings.strategy.maximum_spread_to_stop_ratio,
             }
         )
     return payload

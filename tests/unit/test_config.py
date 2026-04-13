@@ -14,6 +14,15 @@ from hybrid_quant.baseline.orb_intraday_active_research import (
 from hybrid_quant.baseline.intraday_nasdaq_contextual_research import (
     load_intraday_contextual_research_config,
 )
+from hybrid_quant.baseline.intraday_hybrid_research import (
+    load_intraday_hybrid_research_config,
+)
+from hybrid_quant.baseline.intraday_hybrid_realism import (
+    load_intraday_hybrid_realism_config,
+)
+from hybrid_quant.baseline.trend_pullback_v1_research import (
+    load_trend_pullback_v1_research_config,
+)
 from hybrid_quant.baseline.session_trend_30m_zoom import load_session_trend_30m_zoom_config
 
 
@@ -182,6 +191,60 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertTrue(settings.strategy.use_intraday_vwap_filter)
         self.assertTrue(settings.strategy.use_intraday_ema20_filter)
 
+    def test_loads_baseline_intraday_hybrid_variant(self) -> None:
+        config_dir = Path(__file__).resolve().parents[2] / "configs"
+        settings = load_variant_settings(config_dir, "baseline_intraday_hybrid")
+
+        self.assertEqual(settings.market.symbol, "MNQ")
+        self.assertEqual(settings.strategy.family, "intraday_hybrid_contextual")
+        self.assertEqual(settings.strategy.variant_name, "baseline_intraday_hybrid")
+        self.assertEqual(settings.strategy.entry_mode, "macro_pullback_continuation")
+        self.assertTrue(settings.strategy.use_ema_200_1h_trend_filter)
+        self.assertTrue(settings.strategy.use_ema_200_1h_slope)
+        self.assertTrue(settings.strategy.use_macro_bias_filter)
+        self.assertTrue(settings.strategy.enforce_entry_session)
+        self.assertEqual(settings.strategy.entry_session_start_hour_utc, 14)
+        self.assertEqual(settings.strategy.entry_session_start_minute_utc, 0)
+        self.assertEqual(settings.strategy.entry_session_end_hour_utc, 19)
+        self.assertEqual(settings.strategy.entry_session_end_minute_utc, 0)
+        self.assertEqual(settings.strategy.allowed_hours_utc, [14, 15, 16, 17, 18])
+        self.assertTrue(settings.strategy.close_on_session_end)
+        self.assertTrue(settings.risk.block_outside_session)
+        self.assertEqual(settings.risk.session_start_hour_utc, 14)
+        self.assertEqual(settings.risk.session_end_hour_utc, 19)
+        self.assertEqual(settings.risk.max_daily_loss, 0.025)
+        self.assertEqual(settings.backtest.point_value, 2.0)
+        self.assertEqual(settings.backtest.contract_step, 1.0)
+        self.assertEqual(settings.backtest.gap_exit_policy, "open")
+
+    def test_loads_baseline_trend_pullback_v1_gold_variant(self) -> None:
+        config_dir = Path(__file__).resolve().parents[2] / "configs"
+        settings = load_variant_settings(config_dir, "baseline_trend_pullback_v1")
+
+        self.assertEqual(settings.market.symbol, "XAUUSD")
+        self.assertEqual(settings.market.execution_timeframe, "1m")
+        self.assertEqual(settings.strategy.family, "baseline_trend_pullback_v1")
+        self.assertEqual(settings.strategy.entry_mode, "core_v1")
+        self.assertEqual(settings.strategy.entry_session_timezone, "Europe/Madrid")
+        self.assertEqual(settings.strategy.entry_session_windows, ["09:00-11:00", "14:00-16:30"])
+        self.assertEqual(settings.risk.session_windows, ["09:00-11:00", "14:00-16:30"])
+        self.assertEqual(settings.risk.max_consecutive_losses_per_day, 2)
+        self.assertAlmostEqual(settings.risk.max_risk_per_trade, 0.005)
+        self.assertEqual(settings.backtest.point_value, 100.0)
+        self.assertEqual(settings.backtest.gap_exit_policy, "open")
+
+    def test_loads_trend_pullback_v1_research_config(self) -> None:
+        config_path = (
+            Path(__file__).resolve().parents[2] / "configs" / "experiments" / "trend_pullback_v1_research.yaml"
+        )
+        experiment = load_trend_pullback_v1_research_config(config_path)
+
+        self.assertEqual(experiment.base_variant, "baseline_trend_pullback_v1")
+        self.assertEqual(len(experiment.variants), 5)
+        self.assertEqual(experiment.variants[0].name, "core_v1")
+        self.assertEqual(experiment.variants[1].name, "core_v1_macd")
+        self.assertEqual(experiment.variants[2].name, "core_v1_no_m1")
+
     def test_loads_session_trend_30m_variant(self) -> None:
         config_dir = Path(__file__).resolve().parents[2] / "configs"
         settings = load_variant_settings(config_dir, "session_trend_30m")
@@ -221,6 +284,37 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertGreaterEqual(experiment.summary_thresholds.minimum_profit_factor, 1.0)
         self.assertGreaterEqual(len(experiment.variants), 6)
         self.assertEqual(experiment.variants[0].name, "active_orb_reclaim_30m_control")
+
+    def test_loads_intraday_hybrid_research_config(self) -> None:
+        config_path = (
+            Path(__file__).resolve().parents[2]
+            / "configs"
+            / "experiments"
+            / "intraday_hybrid_research.yaml"
+        )
+        experiment = load_intraday_hybrid_research_config(config_path)
+
+        self.assertEqual(experiment.base_variant, "baseline_intraday_hybrid")
+        self.assertGreaterEqual(experiment.summary_thresholds.minimum_profit_factor, 1.10)
+        self.assertGreaterEqual(experiment.summary_thresholds.minimum_trades, 40)
+        self.assertGreaterEqual(len(experiment.variants), 5)
+        self.assertEqual(experiment.variants[0].name, "legacy_orb_control")
+
+    def test_loads_intraday_hybrid_realism_config(self) -> None:
+        config_path = (
+            Path(__file__).resolve().parents[2]
+            / "configs"
+            / "experiments"
+            / "intraday_hybrid_realism.yaml"
+        )
+        experiment = load_intraday_hybrid_realism_config(config_path)
+
+        self.assertEqual(experiment.base_variant, "baseline_intraday_hybrid")
+        self.assertGreaterEqual(len(experiment.instrument_scenarios), 3)
+        self.assertGreaterEqual(len(experiment.timezone_scenarios), 3)
+        self.assertGreaterEqual(len(experiment.cost_scenarios), 4)
+        self.assertTrue(experiment.walk_forward.enabled)
+        self.assertIn("hybrid_pullback_value", experiment.variant_comparison.selected_variants)
 
     def test_loads_session_trend_30m_zoom_config(self) -> None:
         config_path = Path(__file__).resolve().parents[2] / "configs" / "experiments" / "session_trend_30m_zoom.yaml"

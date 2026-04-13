@@ -14,6 +14,7 @@ from .simulator import (
     open_position,
     resolve_intrabar_exit,
     resolve_intrabar_policy,
+    resolve_gap_exit_policy,
     signal_has_executable_levels,
 )
 
@@ -33,5 +34,6 @@ __all__ = [
     "open_position",
     "resolve_intrabar_exit",
     "resolve_intrabar_policy",
+    "resolve_gap_exit_policy",
     "signal_has_executable_levels",
 ]

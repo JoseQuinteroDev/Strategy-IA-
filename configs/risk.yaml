@@ -13,3 +13,27 @@ risk:
   session_end_minute_utc: 55
   require_stop_loss: true
   prop_firm_mode: true
+
+azir_risk:
+  name: risk_engine_azir_v1
+  setup_hour: 16
+  setup_minute: 30
+  close_hour: 22
+  session_fill_start_hour: 16
+  session_fill_end_hour: 21
+  hard_cancel_all_pendings_at_close: true
+  close_positions_at_close: true
+  block_new_setups_if_any_position_or_pending_exists: true
+  force_reconcile_orders_positions_before_setup: true
+  reconciliation_policy: block_and_cleanup
+  friday_no_new_trade: true
+  friday_exposure_policy: close_or_cancel
+  max_daily_loss: 15.0
+  max_daily_loss_pct:
+  starting_equity: 10000.0
+  max_consecutive_losses: 2
+  max_trades_per_day: 1
+  spread_guard_enabled: true
+  max_spread_points: 50.0
+  cancel_remaining_pendings_after_fill: true
+  trailing_audit_required: true

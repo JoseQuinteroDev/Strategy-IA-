@@ -86,6 +86,102 @@ class BacktestEngineTests(unittest.TestCase):
         self.assertAlmostEqual(result.trade_records[0].quantity, 100.0)
         self.assertEqual(result.trade_records[0].exit_reason, "take_profit")
 
+    def test_engine_uses_point_value_integer_contract_sizing_and_fixed_fees(self) -> None:
+        start = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        bars = [
+            _bar(start, 100.0, 100.3, 99.7, 100.0),
+            _bar(start + timedelta(minutes=5), 100.0, 105.2, 99.9, 104.8),
+        ]
+        features = [_feature(bar.timestamp) for bar in bars]
+        signals = [
+            StrategySignal(
+                symbol="MNQ",
+                timestamp=bars[0].timestamp,
+                side=SignalSide.LONG,
+                strength=1.0,
+                rationale="synthetic futures long",
+                entry_price=100.0,
+                stop_price=95.0,
+                target_price=105.0,
+            ),
+            StrategySignal(symbol="MNQ", timestamp=bars[1].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+        ]
+
+        engine = IntradayBacktestEngine(
+            initial_capital=1_000_000.0,
+            fee_bps=0.0,
+            slippage_bps=0.0,
+            latency_ms=0,
+            point_value=2.0,
+            contract_step=1.0,
+            min_contracts=1.0,
+            fee_per_contract_per_side=1.0,
+        )
+        result = engine.run(
+            BacktestRequest(
+                bars=bars,
+                features=features,
+                signals=signals,
+                initial_capital=1_000_000.0,
+                risk_per_trade_fraction=0.0001,
+                max_leverage=10.0,
+            )
+        )
+
+        self.assertEqual(result.trades, 1)
+        self.assertAlmostEqual(result.trade_records[0].quantity, 10.0)
+        self.assertAlmostEqual(result.trade_records[0].gross_pnl, 100.0)
+        self.assertAlmostEqual(result.trade_records[0].fees_paid, 20.0)
+        self.assertAlmostEqual(result.pnl_net, 80.0)
+
+    def test_gap_exit_policy_open_fills_stop_at_gap_open(self) -> None:
+        start = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        bars = [
+            _bar(start, 100.0, 100.3, 99.7, 100.0),
+            _bar(start + timedelta(minutes=5), 100.0, 100.3, 99.8, 100.1),
+            _bar(start + timedelta(minutes=10), 94.0, 95.0, 93.5, 94.2),
+        ]
+        features = [_feature(bar.timestamp) for bar in bars]
+        signals = [
+            StrategySignal(
+                symbol="MNQ",
+                timestamp=bars[0].timestamp,
+                side=SignalSide.LONG,
+                strength=1.0,
+                rationale="gap test",
+                entry_price=100.0,
+                stop_price=95.0,
+                target_price=110.0,
+            ),
+            StrategySignal(symbol="MNQ", timestamp=bars[1].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+            StrategySignal(symbol="MNQ", timestamp=bars[2].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+        ]
+
+        engine = IntradayBacktestEngine(
+            initial_capital=10_000.0,
+            fee_bps=0.0,
+            slippage_bps=0.0,
+            latency_ms=0,
+            point_value=2.0,
+            contract_step=1.0,
+            min_contracts=1.0,
+            gap_exit_policy="open",
+        )
+        result = engine.run(
+            BacktestRequest(
+                bars=bars,
+                features=features,
+                signals=signals,
+                initial_capital=10_000.0,
+                risk_per_trade_fraction=0.01,
+                max_leverage=10.0,
+            )
+        )
+
+        self.assertEqual(result.trades, 1)
+        self.assertEqual(result.trade_records[0].exit_reason, "gap_stop_loss")
+        self.assertAlmostEqual(result.trade_records[0].exit_price, 94.0)
+
     def test_engine_forces_session_close_exit(self) -> None:
         bars = [
             _bar(datetime(2024, 1, 1, 23, 40, tzinfo=UTC), 100.0, 100.4, 99.8, 100.0),
@@ -127,6 +223,51 @@ class BacktestEngineTests(unittest.TestCase):
 
         self.assertEqual(result.trades, 1)
         self.assertEqual(result.trade_records[0].exit_reason, "session_close")
+
+    def test_engine_forces_close_at_end_of_first_configured_session_window(self) -> None:
+        bars = [
+            _bar(datetime(2024, 1, 2, 8, 58, tzinfo=UTC), 100.0, 100.4, 99.8, 100.0),
+            _bar(datetime(2024, 1, 2, 8, 59, tzinfo=UTC), 100.0, 100.2, 99.9, 100.1),
+            _bar(datetime(2024, 1, 2, 10, 0, tzinfo=UTC), 100.1, 100.2, 99.9, 100.05),
+            _bar(datetime(2024, 1, 2, 10, 1, tzinfo=UTC), 100.0, 100.1, 99.9, 100.0),
+        ]
+        features = [_feature(bar.timestamp, zscore=-3.0) for bar in bars]
+        signals = [
+            StrategySignal(
+                symbol="XAUUSD",
+                timestamp=bars[0].timestamp,
+                side=SignalSide.LONG,
+                strength=1.0,
+                rationale="synthetic madrid session long",
+                entry_price=100.0,
+                stop_price=99.0,
+                target_price=102.0,
+                time_stop_bars=500,
+                close_on_session_end=True,
+                entry_reason="synthetic madrid session long",
+            ),
+            StrategySignal(symbol="XAUUSD", timestamp=bars[1].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+            StrategySignal(symbol="XAUUSD", timestamp=bars[2].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+            StrategySignal(symbol="XAUUSD", timestamp=bars[3].timestamp, side=SignalSide.FLAT, strength=0.0, rationale="hold"),
+        ]
+
+        engine = IntradayBacktestEngine(initial_capital=10_000.0, fee_bps=0.0, slippage_bps=0.0, latency_ms=0)
+        result = engine.run(
+            BacktestRequest(
+                bars=bars,
+                features=features,
+                signals=signals,
+                initial_capital=10_000.0,
+                risk_per_trade_fraction=0.01,
+                max_leverage=1.0,
+                session_close_timezone="Europe/Madrid",
+                session_close_windows=("09:00-11:00", "14:00-16:30"),
+            )
+        )
+
+        self.assertEqual(result.trades, 1)
+        self.assertEqual(result.trade_records[0].exit_reason, "session_close")
+        self.assertEqual(result.trade_records[0].exit_timestamp, bars[2].timestamp)
 
     def test_intrabar_policy_stop_first_prefers_stop_when_both_levels_hit(self) -> None:
         result = self._run_intrabar_collision(policy="stop_first")

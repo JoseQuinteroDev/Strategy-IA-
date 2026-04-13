@@ -1,6 +1,80 @@
 # Hybrid Quant Framework
 
-Framework cuantitativo modular en Python para research intradía. El proyecto mantiene la infraestructura de datos, features, backtest, risk, diagnostics y RL, pero la baseline principal de Nasdaq pasa ahora a ser una estrategia clara de `Opening Range Breakout (ORB)` sobre `NQ`.
+## Baseline principal actual
+
+La baseline oficial del proyecto pasa a ser `AzirIA MT5`, no una baseline
+Python inventada. El archivo operativo de verdad es:
+
+- `C:\Users\joseq\Documents\Playground\Azir.mq5`
+
+Las baselines anteriores de BTC/ETH, Nasdaq ORB, `baseline_intraday_hybrid` y
+`baseline_trend_pullback_v1` quedan como legacy y comparacion historica.
+
+Sprint actual del roadmap Azir:
+
+- especificacion formal de la logica real MQL5
+- logging exhaustivo de oportunidades, fills, trailing y exits
+- auditoria inicial del CSV historico
+- preparacion para replica Python fiel
+
+Documentacion principal:
+
+- [docs/spec.md](docs/spec.md)
+- [docs/architecture.md](docs/architecture.md)
+
+Logger MT5:
+
+- `C:\Users\joseq\Documents\Playground\AzirEventLogger.mqh`
+
+Tests del esquema de eventos:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m unittest tests.unit.test_azir_event_log -v
+```
+
+Replica Python y paridad MT5:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.azir `
+  --input-path "C:\Users\joseq\Documents\xauusd_m5.csv" `
+  --output-dir "artifacts\azir-replica"
+```
+
+Cuando exista un log real exportado desde MT5:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.azir `
+  --input-path "C:\Users\joseq\Documents\xauusd_m5.csv" `
+  --mt5-log-path "C:\path\to\azir_events_XAUUSD_123456321.csv" `
+  --output-dir "artifacts\azir-replica"
+```
+
+Artifacts principales:
+
+- `python_events.csv`
+- `replica_run_metadata.json`
+- `parity_report.json`
+- `parity_summary.md`
+- `discrepancies.csv`
+
+Runner de realismo y robustez antes de PPO:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m hybrid_quant.baseline.intraday_hybrid_realism `
+  --config-dir configs `
+  --experiment-config "configs/experiments/intraday_hybrid_realism.yaml" `
+  --input-path "data/raw/NQ/5m/ohlcv-normalized-extended.csv" `
+  --output-dir "artifacts/baseline-intraday-hybrid-realism" `
+  --allow-gaps
+```
+
+Este runner audita el dataset, reexpresa el PnL con `point_value` y contratos MNQ/NQ, compara definiciones horarias con timezone/DST, estresa fees/slippage, ejecuta walk-forward rolling y reejecuta variantes con filtro horario obligatorio y costes realistas. El modelo base actual usa MNQ con `point_value=2`, contratos enteros, `$1.00` por contrato por lado, `0.25` puntos de slippage por lado, fill intrabar conservador y gaps a apertura si la vela abre mas alla de stop/target.
+
+Framework cuantitativo modular en Python para research intradia. El proyecto mantiene la infraestructura de datos, features, backtest, risk, diagnostics y RL, pero la baseline principal de Nasdaq pasa ahora a ser `baseline_intraday_hybrid`: una estrategia intradia hibrida con contexto macro / higher timeframe y ejecucion intradia rule-based.
 
 ## Estado actual
 
@@ -16,50 +90,79 @@ Implementado:
 
 Prioridad actual:
 
-- validar una baseline Nasdaq seria antes de volver a RL
-- usar `baseline_nq_orb` como baseline principal de Nasdaq
+- validar `baseline_trend_pullback_v1` sobre XAUUSD antes de volver a RL
+- mantener `baseline_intraday_hybrid`, ORB y mean reversion como legacy/controles historicos
+
+## Baseline principal de oro
+
+La baseline principal de oro es:
+
+- `baseline_trend_pullback_v1`
+
+Familia:
+
+- `baseline_trend_pullback_v1`
+
+Variantes comparadas:
+
+- `core_v1`: M15 bias + M5 RSI/VWAP pullback + M1 trigger, TP 2R
+- `core_v1_macd`: igual que core, con confirmacion MACD M5
+- `core_v1_no_m1`: entra desde confirmacion M5 sin trigger M1
+- `core_v1_tp_1p5`: core con TP 1.5R
+- `core_v1_macd_tp_1p5`: MACD con TP 1.5R
+
+Artifacts del runner:
+
+- `trend_pullback_v1_comparison.json`
+- `trend_pullback_v1_results.csv`
+- `trend_pullback_v1_summary.md`
+- `candidate_ranking.csv`
+- `split_results.csv`
+- `yearly_variant_summary.csv`
+- `quarterly_variant_summary.csv`
+- `hourly_variant_summary.csv`
+- `side_variant_summary.csv`
+- `trend_pullback_v1_cost_sensitivity.csv`
+- `trend_pullback_v1_walk_forward.csv`
+- `variants/<variant>/baseline/` con `trades.csv`, `signals.csv`, `features.csv`, `report.json`
+- `variants/<variant>/diagnostics/` con breakdowns temporales, por lado y motivo de salida
 
 ## Baseline principal de Nasdaq
 
 La baseline principal de Nasdaq es:
 
-- `baseline_nq_orb`
+- `baseline_intraday_hybrid`
 
 Familia:
 
-- `opening_range_breakout`
+- `intraday_hybrid_contextual`
 
-Lógica base:
+Logica base:
 
-- construye un `opening range` configurable de `15m` o `30m`
-- calcula `opening_range_high`, `opening_range_low`, `opening_range_width` y `opening_range_width_atr`
-- entra solo en ruptura del opening range
-- filtra largos con `close > EMA200 1H` y `EMA200 1H slope > 0`
-- filtra cortos con `close < EMA200 1H` y `EMA200 1H slope < 0`
-- aplica filtros mínimos de calidad:
-  - expansión mínima de la vela
-  - momentum mínimo
-  - ancho mínimo y máximo del opening range relativo a ATR
-  - `relative_volume` mínimo
-  - filtro anti-chase por `breakout_distance_atr`
-- soporta dos modos de entrada:
-  - `breakout_close_entry`
-  - `breakout_retest_entry`
+- construye una capa macro con precio vs `EMA200 1H`, pendiente de EMA200, `ADX 1H` y distancia frente a la media
+- define sesgo o regimen antes de permitir candidate trades intradia
+- compara tres setups limpios: pullback a valor en direccion macro, mean reversion controlada y continuidad tras compresion / expansion
+- usa filtros intradia de `VWAP`, `EMA20`, `EMA50`, momentum, expansion de vela, RVOL y extension maxima
+- bloquea explicitamente cualquier nueva entrada fuera de `14:00-19:00 UTC` con `outside_session: do not trade`
+- emite metadata explicable por trade: setup, macro regime, macro bias, anchor, distancia ATR y trigger
+- mantiene stops obligatorios, targets ATR, time stop, cierre fin de sesion y risk engine prop-firm friendly
 
-La configuración vive en:
+La configuracion vive en:
 
-- [configs/variants/baseline_nq_orb.yaml](configs/variants/baseline_nq_orb.yaml)
+- [configs/variants/baseline_intraday_hybrid.yaml](configs/variants/baseline_intraday_hybrid.yaml)
 
-## Qué queda como legacy
+## Que queda como legacy
 
-La familia anterior `trend_breakout` no desaparece, pero deja de ser la baseline principal de Nasdaq.
+Las familias anteriores no desaparecen, pero dejan de ser la baseline principal de Nasdaq.
 
-Se conserva solo por compatibilidad y comparación histórica:
+Se conservan solo por compatibilidad, pruebas de regresion y comparacion historica:
 
 - [configs/variants/baseline_trend_nasdaq.yaml](configs/variants/baseline_trend_nasdaq.yaml)
 - [src/hybrid_quant/strategy/trend_breakout.py](src/hybrid_quant/strategy/trend_breakout.py)
+- [configs/variants/baseline_nq_orb.yaml](configs/variants/baseline_nq_orb.yaml)
+- [src/hybrid_quant/strategy/opening_range_breakout.py](src/hybrid_quant/strategy/opening_range_breakout.py)
 
-Las variantes experimentales de esa familia deben tratarse como `legacy / deprecated`, no como flujo principal.
+Las variantes experimentales de esas familias deben tratarse como `legacy / deprecated`, no como flujo principal.
 
 ## Arquitectura
 
@@ -85,12 +188,12 @@ hybrid-quant-framework/
 `-- tests/
 ```
 
-Módulos que tocan la baseline ORB:
+Modulos que tocan la baseline principal:
 
-- `features`: cálculo de opening range, slope y `relative_volume`
-- `strategy`: nueva familia `opening_range_breakout`
+- `features`: features deterministas intradia y higher timeframe
+- `strategy`: nueva familia `intraday_hybrid_contextual`
 - `baseline`: runner y diagnostics
-- `configs/variants`: baseline principal Nasdaq y legacy
+- `configs/variants`: baseline principal Nasdaq y variantes legacy
 
 ## Instalación
 

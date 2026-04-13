@@ -84,9 +84,18 @@ class StrategyConfig:
     atr_multiple_stop: float = 1.0
     atr_multiple_target: float = 1.0
     time_stop_bars: int = 12
+    close_on_session_end: bool = True
     session_close_hour_utc: int = 23
     session_close_minute_utc: int = 55
+    session_close_timezone: str = "UTC"
     no_entry_minutes_before_close: int = 30
+    enforce_entry_session: bool = False
+    entry_session_start_hour_utc: int = 14
+    entry_session_start_minute_utc: int = 0
+    entry_session_end_hour_utc: int = 19
+    entry_session_end_minute_utc: int = 0
+    entry_session_timezone: str = "UTC"
+    entry_session_windows: list[str] = field(default_factory=list)
     blocked_hours_utc: list[int] = field(default_factory=list)
     allowed_hours_utc: list[int] = field(default_factory=list)
     allowed_hours_long_utc: list[int] = field(default_factory=list)
@@ -106,6 +115,7 @@ class StrategyConfig:
     minimum_candle_range_atr: float = 0.0
     use_ema_200_1h_trend_filter: bool = True
     use_ema_200_1h_slope: bool = True
+    use_macro_bias_filter: bool = True
     ema_200_1h_slope_tolerance: float = 0.0
     entry_mode: str = "breakout_close_entry"
     opening_range_minutes: int = 30
@@ -125,6 +135,23 @@ class StrategyConfig:
     maximum_context_compression_width_atr: float = 1.5
     require_context_vwap_structure: bool = True
     require_context_or_mid_structure: bool = True
+    pullback_lookback_bars: int = 8
+    trigger_lifetime_bars: int = 10
+    trigger_breakout_lookback_bars: int = 3
+    stop_m1_lookback_bars: int = 5
+    stop_m5_lookback_bars: int = 3
+    stop_buffer_atr: float = 0.10
+    minimum_stop_atr: float = 0.60
+    maximum_stop_atr: float = 1.50
+    maximum_vwap_distance_atr: float = 0.80
+    default_spread_points: float = 0.0
+    maximum_spread_points: float = 0.0
+    maximum_spread_to_stop_ratio: float = 0.12
+    use_macd_confirmation: bool = False
+    use_m1_trigger: bool = True
+    news_filter_enabled: bool = False
+    news_block_minutes_before: int = 15
+    news_block_minutes_after: int = 15
 
 
 @dataclass(slots=True)
@@ -134,6 +161,7 @@ class RiskConfig:
     max_total_drawdown: float = 0.1
     daily_kill_switch: bool = True
     max_trades_per_day: int = 6
+    max_consecutive_losses_per_day: int = 0
     max_open_positions: int = 1
     max_leverage: float = 2.0
     block_outside_session: bool = True
@@ -141,6 +169,8 @@ class RiskConfig:
     session_start_minute_utc: int = 0
     session_end_hour_utc: int = 23
     session_end_minute_utc: int = 55
+    session_timezone: str = "UTC"
+    session_windows: list[str] = field(default_factory=list)
     require_stop_loss: bool = True
     prop_firm_mode: bool = True
 
@@ -152,6 +182,13 @@ class BacktestConfig:
     slippage_bps: float = 2.0
     latency_ms: int = 250
     intrabar_exit_policy: str = "conservative"
+    gap_exit_policy: str = "level"
+    point_value: float = 1.0
+    contract_step: float = 0.0
+    min_contracts: float = 0.0
+    max_contracts: float | None = None
+    fee_per_contract_per_side: float = 0.0
+    slippage_points: float = 0.0
 
 
 @dataclass(slots=True)

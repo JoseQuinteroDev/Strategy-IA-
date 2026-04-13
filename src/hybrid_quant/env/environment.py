@@ -109,6 +109,13 @@ class HybridTradingEnvironment(TradingEnvironment):
         initial_capital: float = 100000.0,
         fee_bps: float = 4.0,
         slippage_bps: float = 2.0,
+        point_value: float = 1.0,
+        contract_step: float = 0.0,
+        min_contracts: float = 0.0,
+        max_contracts: float | None = None,
+        fee_per_contract_per_side: float = 0.0,
+        slippage_points: float = 0.0,
+        gap_exit_policy: str = "level",
         intrabar_exit_policy: str = "conservative",
         symbol: str = "BTCUSDT",
         execution_timeframe: str = "5m",
@@ -124,6 +131,13 @@ class HybridTradingEnvironment(TradingEnvironment):
         self.initial_capital = initial_capital
         self.fee_bps = fee_bps
         self.slippage_bps = slippage_bps
+        self.point_value = point_value
+        self.contract_step = contract_step
+        self.min_contracts = min_contracts
+        self.max_contracts = max_contracts
+        self.fee_per_contract_per_side = fee_per_contract_per_side
+        self.slippage_points = slippage_points
+        self.gap_exit_policy = gap_exit_policy
         self.intrabar_exit_policy = intrabar_exit_policy
         self.symbol = symbol
         self.execution_timeframe = execution_timeframe
@@ -233,6 +247,13 @@ class HybridTradingEnvironment(TradingEnvironment):
             fee_bps=self.fee_bps,
             slippage_bps=self.slippage_bps,
             intrabar_exit_policy=self.intrabar_exit_policy,
+            gap_exit_policy=self.gap_exit_policy,
+            point_value=self.point_value,
+            contract_step=self.contract_step,
+            min_contracts=self.min_contracts,
+            max_contracts=self.max_contracts,
+            fee_per_contract_per_side=self.fee_per_contract_per_side,
+            slippage_points=self.slippage_points,
         )
         self._cursor = 0
         self._episode_steps = 0
@@ -499,6 +520,7 @@ class HybridTradingEnvironment(TradingEnvironment):
                 exit_zscore_threshold=self._exit_zscore_threshold(),
                 session_close_hour_utc=self._session_close_hour(),
                 session_close_minute_utc=self._session_close_minute(),
+                session_close_timezone=self._session_close_timezone(),
             )
             if next_trade is not None:
                 trades_closed.append(next_trade)
@@ -527,7 +549,11 @@ class HybridTradingEnvironment(TradingEnvironment):
             self._daily_kill_switch_active = True
 
         open_positions = int(simulator.position is not None) + int(simulator.pending_entry is not None)
-        gross_exposure = (simulator.position.quantity * bar.close) if simulator.position is not None else 0.0
+        gross_exposure = (
+            simulator.position.quantity * bar.close * simulator.position.point_value
+            if simulator.position is not None
+            else 0.0
+        )
         return PortfolioState(
             equity=current_equity,
             cash=simulator.cash,
@@ -544,6 +570,7 @@ class HybridTradingEnvironment(TradingEnvironment):
                 start_minute_utc=self._session_start_minute(),
                 end_hour_utc=self._session_end_hour(),
                 end_minute_utc=self._session_end_minute(),
+                timezone=self._session_timezone(),
             ),
             timestamp=bar.timestamp,
         )
@@ -597,6 +624,12 @@ class HybridTradingEnvironment(TradingEnvironment):
 
     def _session_close_minute(self) -> int:
         return self.strategy.session_close_minute_utc if self.strategy is not None else 55
+
+    def _session_close_timezone(self) -> str:
+        return getattr(self.strategy, "session_close_timezone", "UTC") if self.strategy is not None else "UTC"
+
+    def _session_timezone(self) -> str:
+        return self.risk_engine.session_timezone if self.risk_engine is not None else "UTC"
 
     def _session_start_hour(self) -> int:
         return self.risk_engine.session_start_hour_utc if self.risk_engine is not None else 0

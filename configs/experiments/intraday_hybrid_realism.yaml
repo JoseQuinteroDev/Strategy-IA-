@@ -1,0 +1,228 @@
+name: intraday_hybrid_realism
+base_variant: baseline_intraday_hybrid
+
+quality:
+  minimum_profit_factor: 1.10
+  minimum_expectancy: 0.0
+  maximum_drawdown: 0.05
+  minimum_positive_walk_forward_test_ratio: 0.50
+  require_costs_x2_positive: true
+
+walk_forward:
+  enabled: true
+  splits: 3
+  train_ratio: 0.50
+  validation_ratio: 0.20
+  test_ratio: 0.10
+
+instrument_scenarios:
+  - name: legacy_unit_accounting_control
+    label: Legacy unit PnL control without futures point value.
+    overrides:
+      market:
+        symbol: NQ
+        venue: cme
+      backtest:
+        fee_bps: 0.10
+        slippage_bps: 0.35
+        fee_per_contract_per_side: 0.0
+        slippage_points: 0.0
+        point_value: 1.0
+        contract_step: 0.0
+        min_contracts: 0.0
+        max_contracts: null
+        intrabar_exit_policy: conservative
+        gap_exit_policy: level
+
+  - name: mnq_realistic_base
+    label: MNQ realistic base, one tick slippage per side.
+    overrides:
+      market:
+        symbol: MNQ
+        venue: cme
+      backtest:
+        fee_bps: 0.0
+        slippage_bps: 0.0
+        fee_per_contract_per_side: 1.0
+        slippage_points: 0.25
+        point_value: 2.0
+        contract_step: 1.0
+        min_contracts: 1.0
+        max_contracts: 20.0
+        intrabar_exit_policy: conservative
+        gap_exit_policy: open
+
+  - name: nq_full_contract_realistic
+    label: Full NQ point value and integer contract sizing.
+    overrides:
+      market:
+        symbol: NQ
+        venue: cme
+      backtest:
+        fee_bps: 0.0
+        slippage_bps: 0.0
+        fee_per_contract_per_side: 3.0
+        slippage_points: 0.25
+        point_value: 20.0
+        contract_step: 1.0
+        min_contracts: 1.0
+        max_contracts: 5.0
+        intrabar_exit_policy: conservative
+        gap_exit_policy: open
+
+timezone_scenarios:
+  - name: utc_14_19
+    label: Current 14:00-19:00 UTC window.
+    overrides:
+      strategy:
+        entry_session_timezone: UTC
+        entry_session_start_hour_utc: 14
+        entry_session_start_minute_utc: 0
+        entry_session_end_hour_utc: 19
+        entry_session_end_minute_utc: 0
+        allowed_hours_utc: []
+        session_close_timezone: UTC
+        session_close_hour_utc: 20
+        session_close_minute_utc: 55
+      risk:
+        session_timezone: UTC
+        session_start_hour_utc: 14
+        session_start_minute_utc: 0
+        session_end_hour_utc: 19
+        session_end_minute_utc: 0
+
+  - name: madrid_14_19
+    label: 14:00-19:00 Europe/Madrid with DST conversion.
+    overrides:
+      strategy:
+        entry_session_timezone: Europe/Madrid
+        entry_session_start_hour_utc: 14
+        entry_session_start_minute_utc: 0
+        entry_session_end_hour_utc: 19
+        entry_session_end_minute_utc: 0
+        allowed_hours_utc: []
+        session_close_timezone: Europe/Madrid
+        session_close_hour_utc: 20
+        session_close_minute_utc: 55
+      risk:
+        session_timezone: Europe/Madrid
+        session_start_hour_utc: 14
+        session_start_minute_utc: 0
+        session_end_hour_utc: 19
+        session_end_minute_utc: 0
+
+  - name: new_york_cash_0930_1430
+    label: 09:30-14:30 America/New_York cash-session style window.
+    overrides:
+      strategy:
+        entry_session_timezone: America/New_York
+        entry_session_start_hour_utc: 9
+        entry_session_start_minute_utc: 30
+        entry_session_end_hour_utc: 14
+        entry_session_end_minute_utc: 30
+        allowed_hours_utc: []
+        session_close_timezone: America/New_York
+        session_close_hour_utc: 16
+        session_close_minute_utc: 55
+      risk:
+        session_timezone: America/New_York
+        session_start_hour_utc: 9
+        session_start_minute_utc: 30
+        session_end_hour_utc: 14
+        session_end_minute_utc: 30
+
+  - name: new_york_1000_1500
+    label: 10:00-15:00 America/New_York regular-session continuation window.
+    overrides:
+      strategy:
+        entry_session_timezone: America/New_York
+        entry_session_start_hour_utc: 10
+        entry_session_start_minute_utc: 0
+        entry_session_end_hour_utc: 15
+        entry_session_end_minute_utc: 0
+        allowed_hours_utc: []
+        session_close_timezone: America/New_York
+        session_close_hour_utc: 16
+        session_close_minute_utc: 55
+      risk:
+        session_timezone: America/New_York
+        session_start_hour_utc: 10
+        session_start_minute_utc: 0
+        session_end_hour_utc: 15
+        session_end_minute_utc: 0
+
+cost_scenarios:
+  - name: base
+    label: Base realistic cost model.
+    overrides: {}
+
+  - name: fees_x1_5
+    label: Fixed commission multiplied by 1.5.
+    overrides:
+      backtest:
+        fee_per_contract_per_side: 1.50
+
+  - name: fees_x2
+    label: Fixed commission multiplied by 2.
+    overrides:
+      backtest:
+        fee_per_contract_per_side: 2.00
+
+  - name: fees_x3
+    label: Fixed commission multiplied by 3.
+    overrides:
+      backtest:
+        fee_per_contract_per_side: 3.00
+
+  - name: slippage_x1_5
+    label: Slippage multiplied by 1.5.
+    overrides:
+      backtest:
+        slippage_points: 0.375
+
+  - name: slippage_x2
+    label: Slippage multiplied by 2.
+    overrides:
+      backtest:
+        slippage_points: 0.50
+
+  - name: slippage_x3
+    label: Slippage multiplied by 3.
+    overrides:
+      backtest:
+        slippage_points: 0.75
+
+  - name: costs_x1_5
+    label: Fees and slippage multiplied by 1.5.
+    overrides:
+      backtest:
+        fee_per_contract_per_side: 1.50
+        slippage_points: 0.375
+
+  - name: costs_x2
+    label: Fees and slippage multiplied by 2.
+    overrides:
+      backtest:
+        fee_per_contract_per_side: 2.00
+        slippage_points: 0.50
+
+  - name: costs_x3
+    label: Fees and slippage multiplied by 3.
+    overrides:
+      backtest:
+        fee_per_contract_per_side: 3.00
+        slippage_points: 0.75
+
+variant_comparison:
+  enabled: true
+  experiment_config: configs/experiments/intraday_hybrid_research.yaml
+  selected_variants:
+    - legacy_orb_control
+    - legacy_session_trend_control
+    - hybrid_pullback_value
+    - hybrid_pullback_flexible_htf
+    - hybrid_pullback_2r
+    - hybrid_mean_reversion_controlled
+    - hybrid_compression_expansion
+    - hybrid_mean_reversion_fast_1r_long_only
+    - hybrid_mean_reversion_fast_1r

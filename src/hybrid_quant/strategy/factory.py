@@ -3,11 +3,13 @@ from __future__ import annotations
 from hybrid_quant.core import Settings
 
 from .base import Strategy
+from .intraday_hybrid_contextual import IntradayHybridContextualStrategy
 from .intraday_nasdaq_contextual import IntradayNasdaqContextualStrategy
 from .mean_reversion import MeanReversionStrategy
 from .orb_intraday_active import IntradayActiveOrbStrategy
 from .opening_range_breakout import OpeningRangeBreakoutStrategy
 from .trend_breakout import TrendBreakoutStrategy
+from .trend_pullback_continuation import TrendPullbackContinuationStrategy
 
 
 def build_strategy(settings: Settings, *, estimated_round_trip_cost_bps: float) -> Strategy:
@@ -193,6 +195,102 @@ def build_strategy(settings: Settings, *, estimated_round_trip_cost_bps: float) 
             use_intraday_ema20_filter=settings.strategy.use_intraday_ema20_filter,
             use_intraday_ema50_alignment=settings.strategy.use_intraday_ema50_alignment,
             use_opening_range_mid_filter=settings.strategy.use_opening_range_mid_filter,
+        )
+
+    if family == "intraday_hybrid_contextual":
+        return IntradayHybridContextualStrategy(
+            name=settings.strategy.name,
+            variant_name=settings.strategy.variant_name,
+            trend_filter=settings.strategy.trend_filter,
+            regime_filter=settings.strategy.regime_filter,
+            execution_timeframe=settings.market.execution_timeframe,
+            filter_timeframe=settings.market.filter_timeframe,
+            entry_mode=settings.strategy.entry_mode,
+            atr_multiple_stop=settings.strategy.atr_multiple_stop,
+            atr_multiple_target=settings.strategy.atr_multiple_target,
+            time_stop_bars=settings.strategy.time_stop_bars,
+            close_on_session_end=settings.strategy.close_on_session_end,
+            session_close_hour_utc=settings.strategy.session_close_hour_utc,
+            session_close_minute_utc=settings.strategy.session_close_minute_utc,
+            session_close_timezone=settings.strategy.session_close_timezone,
+            no_entry_minutes_before_close=settings.strategy.no_entry_minutes_before_close,
+            enforce_entry_session=settings.strategy.enforce_entry_session,
+            entry_session_start_hour_utc=settings.strategy.entry_session_start_hour_utc,
+            entry_session_start_minute_utc=settings.strategy.entry_session_start_minute_utc,
+            entry_session_end_hour_utc=settings.strategy.entry_session_end_hour_utc,
+            entry_session_end_minute_utc=settings.strategy.entry_session_end_minute_utc,
+            entry_session_timezone=settings.strategy.entry_session_timezone,
+            blocked_hours_utc=settings.strategy.blocked_hours_utc,
+            allowed_hours_utc=settings.strategy.allowed_hours_utc,
+            allowed_hours_long_utc=settings.strategy.allowed_hours_long_utc,
+            allowed_hours_short_utc=settings.strategy.allowed_hours_short_utc,
+            allowed_weekdays=settings.strategy.allowed_weekdays,
+            allowed_sides=settings.strategy.allowed_sides,
+            exclude_weekends=settings.strategy.exclude_weekends,
+            entry_zscore=settings.strategy.entry_zscore,
+            mean_reversion_anchor=settings.strategy.mean_reversion_anchor,
+            adx_threshold=settings.strategy.adx_threshold,
+            minimum_anchor_distance_atr=settings.strategy.minimum_anchor_distance_atr,
+            minimum_expected_move_bps=settings.strategy.minimum_expected_move_bps,
+            minimum_target_to_cost_ratio=settings.strategy.minimum_target_to_cost_ratio,
+            estimated_round_trip_cost_bps=estimated_round_trip_cost_bps,
+            momentum_lookback_bars=settings.strategy.momentum_lookback_bars,
+            minimum_momentum_abs=settings.strategy.minimum_momentum_abs,
+            minimum_candle_range_atr=settings.strategy.minimum_candle_range_atr,
+            use_ema_200_1h_trend_filter=settings.strategy.use_ema_200_1h_trend_filter,
+            use_ema_200_1h_slope=settings.strategy.use_ema_200_1h_slope,
+            use_macro_bias_filter=settings.strategy.use_macro_bias_filter,
+            ema_200_1h_slope_tolerance=settings.strategy.ema_200_1h_slope_tolerance,
+            minimum_relative_volume=settings.strategy.minimum_relative_volume,
+            max_breakout_distance_atr=settings.strategy.max_breakout_distance_atr,
+            max_breakouts_per_day=settings.strategy.max_breakouts_per_day,
+            maximum_pullback_depth_atr=settings.strategy.maximum_pullback_depth_atr,
+            use_intraday_vwap_filter=settings.strategy.use_intraday_vwap_filter,
+            use_intraday_ema20_filter=settings.strategy.use_intraday_ema20_filter,
+            use_intraday_ema50_alignment=settings.strategy.use_intraday_ema50_alignment,
+            use_opening_range_mid_filter=settings.strategy.use_opening_range_mid_filter,
+        )
+
+    if family == "baseline_trend_pullback_v1":
+        return TrendPullbackContinuationStrategy(
+            name=settings.strategy.name,
+            variant_name=settings.strategy.variant_name,
+            execution_timeframe=settings.market.execution_timeframe,
+            filter_timeframe=settings.market.filter_timeframe,
+            entry_mode=settings.strategy.entry_mode,
+            atr_multiple_target=settings.strategy.atr_multiple_target,
+            time_stop_bars=settings.strategy.time_stop_bars,
+            close_on_session_end=settings.strategy.close_on_session_end,
+            session_close_hour_utc=settings.strategy.session_close_hour_utc,
+            session_close_minute_utc=settings.strategy.session_close_minute_utc,
+            session_close_timezone=settings.strategy.session_close_timezone,
+            no_entry_minutes_before_close=settings.strategy.no_entry_minutes_before_close,
+            enforce_entry_session=settings.strategy.enforce_entry_session,
+            entry_session_start_hour_utc=settings.strategy.entry_session_start_hour_utc,
+            entry_session_start_minute_utc=settings.strategy.entry_session_start_minute_utc,
+            entry_session_end_hour_utc=settings.strategy.entry_session_end_hour_utc,
+            entry_session_end_minute_utc=settings.strategy.entry_session_end_minute_utc,
+            entry_session_timezone=settings.strategy.entry_session_timezone,
+            entry_session_windows=settings.strategy.entry_session_windows,
+            blocked_hours_utc=settings.strategy.blocked_hours_utc,
+            allowed_hours_utc=settings.strategy.allowed_hours_utc,
+            allowed_hours_long_utc=settings.strategy.allowed_hours_long_utc,
+            allowed_hours_short_utc=settings.strategy.allowed_hours_short_utc,
+            allowed_weekdays=settings.strategy.allowed_weekdays,
+            allowed_sides=settings.strategy.allowed_sides,
+            exclude_weekends=settings.strategy.exclude_weekends,
+            stop_buffer_atr=settings.strategy.stop_buffer_atr,
+            minimum_stop_atr=settings.strategy.minimum_stop_atr,
+            maximum_stop_atr=settings.strategy.maximum_stop_atr,
+            maximum_vwap_distance_atr=settings.strategy.maximum_vwap_distance_atr,
+            default_spread_points=settings.strategy.default_spread_points,
+            maximum_spread_points=settings.strategy.maximum_spread_points,
+            maximum_spread_to_stop_ratio=settings.strategy.maximum_spread_to_stop_ratio,
+            use_macd_confirmation=settings.strategy.use_macd_confirmation,
+            use_m1_trigger=settings.strategy.use_m1_trigger,
+            news_filter_enabled=settings.strategy.news_filter_enabled,
+            news_block_minutes_before=settings.strategy.news_block_minutes_before,
+            news_block_minutes_after=settings.strategy.news_block_minutes_after,
         )
 
     raise ValueError(f"Unsupported strategy family: {family}")
