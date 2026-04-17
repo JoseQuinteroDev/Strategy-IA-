@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -129,6 +130,48 @@ OBSERVATION_FIELDS: tuple[str, ...] = (
 )
 
 
+OBSERVATION_FIELDS_V1 = OBSERVATION_FIELDS
+
+
+OBSERVATION_FIELDS_V2: tuple[str, ...] = (
+    "day_of_week_sin",
+    "day_of_week_cos",
+    "month_sin",
+    "month_cos",
+    "is_friday",
+    "buy_order_placed",
+    "sell_order_placed",
+    "buy_allowed_by_trend",
+    "sell_allowed_by_trend",
+    "pending_distance_atr",
+    "spread_atr",
+    "swing_width_atr",
+    "buy_entry_vs_ema_atr",
+    "sell_entry_vs_ema_atr",
+    "swing_high_vs_ema_atr",
+    "swing_low_vs_ema_atr",
+    "prev_close_vs_ema_atr",
+    "atr_points_scaled",
+    "rsi_centered",
+    "trend_filter_enabled",
+    "atr_filter_enabled",
+    "atr_filter_passed",
+    "rsi_gate_enabled",
+    "rsi_gate_required",
+    "prior_exposure_flag",
+    "cleanup_issue_before_risk",
+    "daily_realized_pnl_pct",
+    "daily_drawdown_pct",
+    "total_drawdown_pct",
+    "consecutive_losses_today_ratio",
+    "trades_today_ratio",
+    "remaining_daily_loss_ratio",
+    "risk_tension_ratio",
+    "risk_engine_approved",
+    "risk_blocked_flag",
+)
+
+
 FORBIDDEN_OBSERVATION_FIELDS: tuple[str, ...] = (
     "protected_net_pnl",
     "protected_gross_pnl",
@@ -147,6 +190,9 @@ class AzirEventRewardConfig:
     risk_tension_penalty_weight: float = 0.25
     risk_blocked_penalty: float = 0.25
     invalid_take_penalty: float = 0.05
+    reward_pnl_scale: float = 1.0
+    skip_opportunity_cost_weight: float = 0.0
+    skip_opportunity_cost_cap: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -201,23 +247,26 @@ class AzirEventReplayEnvironment(gym.Env):
         risk_config: AzirRiskConfig | None = None,
         reward_config: AzirEventRewardConfig | None = None,
         initial_equity: float = 10000.0,
+        observation_version: str = "v1",
     ) -> None:
         if not events:
             raise ValueError("AzirEventReplayEnvironment requires at least one replay event.")
-        _validate_observation_schema()
+        self.observation_version = observation_version
+        self._observation_fields = _resolve_observation_fields(observation_version)
+        _validate_observation_schema(self._observation_fields)
         self.events = sorted(events, key=lambda event: event.timestamp)
         self.risk_config = risk_config or AzirRiskConfig(starting_equity=initial_equity)
         self.reward_config = reward_config or AzirEventRewardConfig()
         self.risk_engine = AzirRiskEngine(self.risk_config)
         self.initial_equity = float(initial_equity)
         self.action_space = spaces.Discrete(2)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(OBSERVATION_FIELDS),), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(self._observation_fields),), dtype=np.float32)
         self._cursor = 0
         self._account = AzirEnvAccountState(initial_equity=initial_equity, equity=initial_equity, peak_equity=initial_equity)
 
     @property
     def observation_fields(self) -> tuple[str, ...]:
-        return OBSERVATION_FIELDS
+        return self._observation_fields
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[np.ndarray, dict[str, Any]]:
         try:
@@ -247,7 +296,7 @@ class AzirEventReplayEnvironment(gym.Env):
         self._cursor += 1
         terminated = self._cursor >= len(self.events)
         if terminated:
-            observation = np.zeros(len(OBSERVATION_FIELDS), dtype=np.float32)
+            observation = np.zeros(len(self._observation_fields), dtype=np.float32)
         else:
             next_event = self.events[self._cursor]
             self._roll_day_if_needed(next_event)
@@ -281,7 +330,8 @@ class AzirEventReplayEnvironment(gym.Env):
     ) -> tuple[float, dict[str, Any], str]:
         risk_tension = self._risk_tension_ratio()
         if action == ACTION_SKIP:
-            return 0.0, self._reward_breakdown(0.0, 0.0, 0.0, 0.0), "skip"
+            skip_penalty = self._skip_opportunity_cost(event, risk_decision)
+            return -skip_penalty, self._reward_breakdown(0.0, 0.0, 0.0, 0.0, skip_opportunity_cost=skip_penalty), "skip"
         if not risk_decision.approved:
             penalty = self.reward_config.risk_blocked_penalty
             return -penalty, self._reward_breakdown(0.0, 0.0, risk_tension, penalty), "risk_blocked_take_transformed_to_skip"
@@ -301,13 +351,20 @@ class AzirEventReplayEnvironment(gym.Env):
         dd_penalty = self.reward_config.drawdown_penalty_weight * (daily_dd + total_dd)
         tension_penalty = self.reward_config.risk_tension_penalty_weight * risk_tension
         reward = pnl - dd_penalty - tension_penalty
+        if self.reward_config.mode == "protected_net_pnl_scaled_v2":
+            reward = (pnl / self._reward_pnl_scale()) - dd_penalty - tension_penalty
         return reward, self._reward_breakdown(pnl, dd_penalty, risk_tension, 0.0), "take"
 
     def _observation(self, event: AzirReplayEvent, risk_decision: AzirRiskDecision) -> np.ndarray:
         values = self._observation_dict(event, risk_decision)
-        return np.asarray([values[name] for name in OBSERVATION_FIELDS], dtype=np.float32)
+        return np.asarray([values[name] for name in self._observation_fields], dtype=np.float32)
 
     def _observation_dict(self, event: AzirReplayEvent, risk_decision: AzirRiskDecision) -> dict[str, float]:
+        if self.observation_version == "v2":
+            return self._observation_dict_v2(event, risk_decision)
+        return self._observation_dict_v1(event, risk_decision)
+
+    def _observation_dict_v1(self, event: AzirReplayEvent, risk_decision: AzirRiskDecision) -> dict[str, float]:
         setup = event.setup
         daily_dd = max(0.0, self._account.day_start_equity - self._account.equity)
         total_dd = max(0.0, self._account.peak_equity - self._account.equity)
@@ -360,6 +417,68 @@ class AzirEventReplayEnvironment(gym.Env):
             "risk_blocked_flag": _bool_float(not risk_decision.approved),
         }
 
+    def _observation_dict_v2(self, event: AzirReplayEvent, risk_decision: AzirRiskDecision) -> dict[str, float]:
+        setup = event.setup
+        daily_dd = max(0.0, self._account.day_start_equity - self._account.equity)
+        total_dd = max(0.0, self._account.peak_equity - self._account.equity)
+        max_daily_loss = abs(self.risk_config.max_daily_loss)
+        remaining_daily_loss = max(0.0, max_daily_loss + self._account.daily_realized_pnl)
+        prior_exposure = bool(event.lifecycle.get("survived_change_of_day")) or int(event.lifecycle.get("out_of_window_fill_count") or 0) > 0
+        cleanup_issue = bool(
+            event.lifecycle.get("order_placed")
+            and event.lifecycle.get("cleanup_count", 0) == 0
+            and (
+                event.lifecycle.get("lifecycle_status") == "missing_cleanup_or_unresolved"
+                or prior_exposure
+            )
+        )
+        swing_high = _float_or_zero(setup.get("swing_high"))
+        swing_low = _float_or_zero(setup.get("swing_low"))
+        buy_entry = _float_or_zero(setup.get("buy_entry"))
+        sell_entry = _float_or_zero(setup.get("sell_entry"))
+        ema20 = _float_or_zero(setup.get("ema20"))
+        atr = max(_float_or_zero(setup.get("atr")), 1e-9)
+        atr_points = max(_float_or_zero(setup.get("atr_points")), 1e-9)
+        day_of_week = _float_or_zero(setup.get("day_of_week"))
+        month = float(event.timestamp.month)
+        return {
+            "day_of_week_sin": _cyclical_sin(day_of_week, 7.0),
+            "day_of_week_cos": _cyclical_cos(day_of_week, 7.0),
+            "month_sin": _cyclical_sin(month, 12.0),
+            "month_cos": _cyclical_cos(month, 12.0),
+            "is_friday": _bool_float(_is_true(setup.get("is_friday")) or setup.get("event_type") == "blocked_friday"),
+            "buy_order_placed": _bool_float(_is_true(setup.get("buy_order_placed"))),
+            "sell_order_placed": _bool_float(_is_true(setup.get("sell_order_placed"))),
+            "buy_allowed_by_trend": _bool_float(_is_true(setup.get("buy_allowed_by_trend"))),
+            "sell_allowed_by_trend": _bool_float(_is_true(setup.get("sell_allowed_by_trend"))),
+            "pending_distance_atr": _safe_ratio(_float_or_zero(setup.get("pending_distance_points")), atr_points),
+            "spread_atr": _safe_ratio(_float_or_zero(setup.get("spread_points")), atr_points),
+            "swing_width_atr": _safe_ratio(swing_high - swing_low, atr),
+            "buy_entry_vs_ema_atr": _safe_ratio(buy_entry - ema20, atr),
+            "sell_entry_vs_ema_atr": _safe_ratio(sell_entry - ema20, atr),
+            "swing_high_vs_ema_atr": _safe_ratio(swing_high - ema20, atr),
+            "swing_low_vs_ema_atr": _safe_ratio(swing_low - ema20, atr),
+            "prev_close_vs_ema_atr": _safe_ratio(_float_or_zero(setup.get("prev_close_vs_ema20_points")), atr_points),
+            "atr_points_scaled": _safe_ratio(atr_points, 1000.0),
+            "rsi_centered": _safe_ratio(_float_or_zero(setup.get("rsi")) - 50.0, 50.0),
+            "trend_filter_enabled": _bool_float(_is_true(setup.get("trend_filter_enabled"))),
+            "atr_filter_enabled": _bool_float(_is_true(setup.get("atr_filter_enabled"))),
+            "atr_filter_passed": _bool_float(_is_true(setup.get("atr_filter_passed"))),
+            "rsi_gate_enabled": _bool_float(_is_true(setup.get("rsi_gate_enabled"))),
+            "rsi_gate_required": _bool_float(_is_true(setup.get("rsi_gate_required"))),
+            "prior_exposure_flag": _bool_float(prior_exposure),
+            "cleanup_issue_before_risk": _bool_float(cleanup_issue),
+            "daily_realized_pnl_pct": _safe_ratio(self._account.daily_realized_pnl, self.initial_equity),
+            "daily_drawdown_pct": _safe_ratio(daily_dd, self.initial_equity),
+            "total_drawdown_pct": _safe_ratio(total_dd, self.initial_equity),
+            "consecutive_losses_today_ratio": _safe_ratio(float(self._account.consecutive_losses_today), max(self.risk_config.max_consecutive_losses, 1)),
+            "trades_today_ratio": _safe_ratio(float(self._account.trades_today), max(self.risk_config.max_trades_per_day, 1)),
+            "remaining_daily_loss_ratio": _safe_ratio(remaining_daily_loss, max_daily_loss),
+            "risk_tension_ratio": float(self._risk_tension_ratio()),
+            "risk_engine_approved": _bool_float(risk_decision.approved),
+            "risk_blocked_flag": _bool_float(not risk_decision.approved),
+        }
+
     def _evaluate_risk(self, event: AzirReplayEvent) -> AzirRiskDecision:
         state = AzirRiskState(
             timestamp=event.timestamp,
@@ -389,21 +508,42 @@ class AzirEventReplayEnvironment(gym.Env):
         used = max(0.0, -self._account.daily_realized_pnl)
         return min(1.0, used / limit)
 
+    def _reward_pnl_scale(self) -> float:
+        return max(float(self.reward_config.reward_pnl_scale), 1e-9)
+
+    def _skip_opportunity_cost(self, event: AzirReplayEvent, risk_decision: AzirRiskDecision) -> float:
+        if self.reward_config.skip_opportunity_cost_weight <= 0.0:
+            return 0.0
+        if not event.order_placed or not risk_decision.approved or not event.has_protected_fill:
+            return 0.0
+        pnl = event.protected_net_pnl
+        if pnl <= 0.0:
+            return 0.0
+        scaled = pnl / self._reward_pnl_scale()
+        return min(
+            float(self.reward_config.skip_opportunity_cost_cap),
+            float(self.reward_config.skip_opportunity_cost_weight) * scaled,
+        )
+
     def _reward_breakdown(
         self,
         pnl: float,
         drawdown_penalty: float,
         risk_tension: float,
         invalid_penalty: float,
+        skip_opportunity_cost: float = 0.0,
     ) -> dict[str, float | str]:
         tension_penalty = self.reward_config.risk_tension_penalty_weight * risk_tension
+        protected_reward_pnl = pnl / self._reward_pnl_scale() if self.reward_config.mode == "protected_net_pnl_scaled_v2" else pnl
         return {
             "mode": self.reward_config.mode,
             "protected_net_pnl": float(pnl),
+            "protected_reward_pnl": float(protected_reward_pnl),
             "drawdown_penalty": float(drawdown_penalty),
             "risk_tension_penalty": float(tension_penalty),
             "invalid_action_penalty": float(invalid_penalty),
-            "reward": float(pnl - drawdown_penalty - tension_penalty - invalid_penalty),
+            "skip_opportunity_cost": float(skip_opportunity_cost),
+            "reward": float(protected_reward_pnl - drawdown_penalty - tension_penalty - invalid_penalty - skip_opportunity_cost),
         }
 
     def _info(
@@ -430,7 +570,8 @@ class AzirEventReplayEnvironment(gym.Env):
             "has_protected_fill": event.has_protected_fill,
             "reward_breakdown": reward_breakdown or {},
             "equity": self._account.equity,
-            "observation_schema": OBSERVATION_FIELDS,
+            "observation_schema": self._observation_fields,
+            "observation_version": self.observation_version,
         }
 
 
@@ -502,7 +643,8 @@ def write_azir_env_inspection_artifacts(
         "environment": "AzirEventReplayEnvironment",
         "unit": "daily_azir_setup_event",
         "actions": {"0": "skip", "1": "take"},
-        "observation_fields": list(OBSERVATION_FIELDS),
+        "observation_version": env.observation_version,
+        "observation_fields": list(env.observation_fields),
         "forbidden_observation_fields": list(FORBIDDEN_OBSERVATION_FIELDS),
         "initial_observation_shape": list(observation.shape),
         "notes": [
@@ -576,7 +718,7 @@ def main(argv: list[str] | None = None) -> int:
                 "environment": "AzirEventReplayEnvironment",
                 "events": len(events),
                 "actions": {"0": "skip", "1": "take"},
-                "observation_fields": len(OBSERVATION_FIELDS),
+                "observation_fields": len(env.observation_fields),
                 "output_dir": args.output_dir,
                 "first_sample_reward": artifacts["sample_steps"][0]["reward"] if artifacts["sample_steps"] else None,
             },
@@ -635,8 +777,16 @@ def _merge_forced_case_outcomes(outcomes: dict[str, dict[str, Any]], cases: list
         outcome["exit_reason"] = "risk_engine_forced_close_revalued"
 
 
-def _validate_observation_schema() -> None:
-    leaked = set(OBSERVATION_FIELDS) & set(FORBIDDEN_OBSERVATION_FIELDS)
+def _resolve_observation_fields(observation_version: str) -> tuple[str, ...]:
+    if observation_version == "v1":
+        return OBSERVATION_FIELDS_V1
+    if observation_version == "v2":
+        return OBSERVATION_FIELDS_V2
+    raise ValueError(f"Unsupported Azir observation_version: {observation_version}")
+
+
+def _validate_observation_schema(fields: tuple[str, ...]) -> None:
+    leaked = set(fields) & set(FORBIDDEN_OBSERVATION_FIELDS)
     if leaked:
         raise ValueError(f"Observation schema contains future/outcome fields: {sorted(leaked)}")
 
@@ -648,6 +798,24 @@ def _float_or_zero(value: Any) -> float:
 
 def _bool_float(value: bool) -> float:
     return 1.0 if value else 0.0
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if abs(denominator) <= 1e-12:
+        return 0.0
+    return float(numerator / denominator)
+
+
+def _cyclical_sin(value: float, period: float) -> float:
+    if period <= 0.0:
+        return 0.0
+    return float(math.sin(2.0 * math.pi * value / period))
+
+
+def _cyclical_cos(value: float, period: float) -> float:
+    if period <= 0.0:
+        return 0.0
+    return float(math.cos(2.0 * math.pi * value / period))
 
 
 if __name__ == "__main__":

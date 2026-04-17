@@ -1,9 +1,12 @@
 __all__ = [
     "AzirEventReplayEnvironment",
+    "AzirManagementReplayEnvironment",
     "AzirReplayEvent",
+    "AzirManagementEvent",
     "HybridTradingEnvironment",
     "TradingEnvironment",
     "build_azir_event_replay_dataset",
+    "build_azir_management_replay_dataset",
 ]
 
 
@@ -15,6 +18,18 @@ def __getattr__(name: str):
             "AzirEventReplayEnvironment": AzirEventReplayEnvironment,
             "AzirReplayEvent": AzirReplayEvent,
             "build_azir_event_replay_dataset": build_azir_event_replay_dataset,
+        }[name]
+    if name in {"AzirManagementReplayEnvironment", "AzirManagementEvent", "build_azir_management_replay_dataset"}:
+        from .azir_management_env import (
+            AzirManagementEvent,
+            AzirManagementReplayEnvironment,
+            build_azir_management_replay_dataset,
+        )
+
+        return {
+            "AzirManagementReplayEnvironment": AzirManagementReplayEnvironment,
+            "AzirManagementEvent": AzirManagementEvent,
+            "build_azir_management_replay_dataset": build_azir_management_replay_dataset,
         }[name]
     if name in {"HybridTradingEnvironment", "TradingEnvironment"}:
         from .environment import HybridTradingEnvironment, TradingEnvironment

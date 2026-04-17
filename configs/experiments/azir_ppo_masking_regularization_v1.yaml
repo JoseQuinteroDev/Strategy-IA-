@@ -1,0 +1,59 @@
+benchmark: baseline_azir_protected_economic_v1
+risk_engine: risk_engine_azir_v1
+sprint: ppo_valid_action_masking_and_policy_regularization_v1
+
+splits:
+  train_ratio: 0.60
+  validation_ratio: 0.20
+  test_ratio: 0.20
+
+env:
+  observation_version: v2
+
+reward:
+  mode: protected_net_pnl_scaled_v2
+  drawdown_penalty_weight: 0.02
+  risk_tension_penalty_weight: 0.25
+  risk_blocked_penalty: 0.25
+  invalid_take_penalty: 0.05
+  reward_pnl_scale: 1.0
+  skip_opportunity_cost_weight: 0.10
+  skip_opportunity_cost_cap: 1.0
+
+masking:
+  mode: eligible_only
+
+ppo:
+  policy: MlpPolicy
+  total_timesteps: 5000
+  learning_rate: 0.0003
+  n_steps: 64
+  batch_size: 64
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.01
+  clip_range: 0.2
+  eval_freq: 1000
+  checkpoint_freq: 1000
+  device: auto
+  verbose: 0
+  seeds:
+    - 7
+    - 11
+    - 17
+
+regularization_variants:
+  - name: masked_ent_0_00
+    ent_coef: 0.0
+  - name: masked_ent_0_01
+    ent_coef: 0.01
+  - name: masked_ent_0_03
+    ent_coef: 0.03
+
+controls:
+  random_valid_seeds:
+    - 101
+    - 202
+    - 303
+    - 404
+    - 505

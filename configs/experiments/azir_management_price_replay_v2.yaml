@@ -1,0 +1,52 @@
+benchmark: baseline_azir_protected_economic_v1
+risk_engine: risk_engine_azir_v1
+pricing_priority:
+  - tick
+  - m1_fallback
+  - protected_base
+
+instrument:
+  point: 0.01
+  contract_size: 100.0
+  default_lot_size: 0.01
+
+replay:
+  close_early_after_closed_m1_bars: 1
+  sl_points: 500.0
+  tp_points: 500.0
+  break_even_activation_points: 90.0
+  trailing_conservative_activation_points: 120.0
+  trailing_conservative_step_points: 70.0
+  trailing_aggressive_activation_points: 60.0
+  trailing_aggressive_step_points: 35.0
+  intrabar_policy: tick_chronological_then_conservative_fallback
+
+heuristics:
+  - name: always_base_management
+    mode: always
+    action: base_management
+  - name: always_close_early
+    mode: always
+    action: close_early
+  - name: move_to_be_after_mfe_threshold
+    mode: mfe_threshold
+    action: move_to_break_even
+    threshold_points: 90.0
+  - name: conservative_trailing_after_mfe_threshold
+    mode: mfe_threshold
+    action: trailing_conservative
+    threshold_points: 120.0
+  - name: aggressive_trailing_after_mfe_threshold
+    mode: mfe_threshold
+    action: trailing_aggressive
+    threshold_points: 60.0
+  - name: sell_only_conservative_trailing_after_mfe_threshold
+    mode: side_mfe_threshold
+    side: sell
+    action: trailing_conservative
+    threshold_points: 120.0
+  - name: buy_only_conservative_trailing_after_mfe_threshold
+    mode: side_mfe_threshold
+    side: buy
+    action: trailing_conservative
+    threshold_points: 120.0

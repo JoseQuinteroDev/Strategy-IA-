@@ -670,7 +670,7 @@ class HybridTradingEnvironment(TradingEnvironment):
         return float(max(0.0, self._max_open_positions_limit() - open_positions))
 
     def _feature_vector(self, feature_snapshot: FeatureSnapshot) -> list[float]:
-        return [float(feature_snapshot.values.get(name, 0.0)) for name in self._feature_names]
+        return [self._finite_observation_value(feature_snapshot.values.get(name, 0.0)) for name in self._feature_names]
 
     def _state_vector(self, *, portfolio_state: PortfolioState, candidate_signal: StrategySignal) -> list[float]:
         position = 0.0
@@ -711,6 +711,12 @@ class HybridTradingEnvironment(TradingEnvironment):
         if denominator <= 0.0:
             return 0.0
         return float(numerator / denominator)
+
+    def _finite_observation_value(self, value: Any) -> float:
+        resolved = float(value)
+        if not math.isfinite(resolved):
+            return 0.0
+        return resolved
 
     def _require_simulator(self) -> PortfolioSimulator:
         if self._simulator is None:

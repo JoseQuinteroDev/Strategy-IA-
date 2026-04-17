@@ -8,6 +8,7 @@ offset and the RSI gate only activating when both pending orders exist.
 from __future__ import annotations
 
 import csv
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
@@ -42,6 +43,21 @@ class AzirReplicaConfig:
     ny_open_minute: int = 30
     close_hour: int = 22
     swing_bars: int = 10
+    buy_swing_bars: int | None = None
+    sell_swing_bars: int | None = None
+    swing_definition: str = "rolling"
+    fractal_side_bars: int = 2
+    entry_offset_points: float = 5.0
+    buy_entry_offset_points: float | None = None
+    sell_entry_offset_points: float | None = None
+    entry_offset_atr_fraction: float | None = None
+    buy_entry_offset_atr_fraction: float | None = None
+    sell_entry_offset_atr_fraction: float | None = None
+    range_quality_enabled: bool = False
+    min_range_width_atr: float | None = None
+    max_range_width_atr: float | None = None
+    compression_lookback_bars: int = 20
+    max_compression_range_atr: float | None = None
     allow_buys: bool = True
     allow_sells: bool = True
     allow_trend_filter: bool = True
@@ -192,7 +208,7 @@ class AzirPythonReplica:
         self._ema20 = ema([bar.close for bar in self.bars], 20)
         self._atr = atr(self.bars, self.config.atr_period)
         self._rsi = rsi(self.rsi_bars, self.config.rsi_period)
-        self._rsi_index = {bar.open_time: index for index, bar in enumerate(self.rsi_bars)}
+        self._rsi_times = [bar.open_time for bar in self.rsi_bars]
 
     def run(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -225,23 +241,37 @@ class AzirPythonReplica:
                 )
             ]
 
-        if setup_index < max(cfg.swing_bars, cfg.atr_period, 20) + 1:
+        buy_swing_bars = cfg.buy_swing_bars or cfg.swing_bars
+        sell_swing_bars = cfg.sell_swing_bars or cfg.swing_bars
+        required_history = max(
+            cfg.swing_bars,
+            buy_swing_bars,
+            sell_swing_bars,
+            cfg.atr_period,
+            cfg.compression_lookback_bars,
+            20,
+        )
+        if setup_index < required_history + 1:
             return []
 
         previous_index = setup_index - 1
-        swing_slice = self.bars[setup_index - cfg.swing_bars : setup_index]
-        swing_high = max(bar.high for bar in swing_slice)
-        swing_low = min(bar.low for bar in swing_slice)
+        swing_high = self._swing_high(setup_index, buy_swing_bars)
+        swing_low = self._swing_low(setup_index, sell_swing_bars)
         prev_close = self.bars[previous_index].close
         ema20 = self._ema20[previous_index]
         atr_value = self._atr[previous_index]
         if ema20 is None or atr_value is None:
             return []
 
-        buy_entry = swing_high + 5.0 * cfg.point
-        sell_entry = swing_low - 5.0 * cfg.point
-        pending_distance_points = (buy_entry - sell_entry) / cfg.point
         atr_points = atr_value / cfg.point
+        buy_offset_points = self._entry_offset_points("buy", atr_points)
+        sell_offset_points = self._entry_offset_points("sell", atr_points)
+        buy_entry = swing_high + buy_offset_points * cfg.point
+        sell_entry = swing_low - sell_offset_points * cfg.point
+        pending_distance_points = (buy_entry - sell_entry) / cfg.point
+        swing_range_points = (swing_high - swing_low) / cfg.point
+        range_width_atr = swing_range_points / atr_points if atr_points else 0.0
+        compression_range_atr = self._compression_range_atr(setup_index, atr_points)
         rsi_setup = self._closed_rsi_before(dt)
         buy_allowed_by_trend = (not cfg.allow_trend_filter or prev_close > ema20) and cfg.allow_buys
         sell_allowed_by_trend = (not cfg.allow_trend_filter or prev_close < ema20) and cfg.allow_sells
@@ -255,6 +285,12 @@ class AzirPythonReplica:
             "ny_open_minute": cfg.ny_open_minute,
             "close_hour": cfg.close_hour,
             "swing_bars": cfg.swing_bars,
+            "buy_swing_bars": buy_swing_bars,
+            "sell_swing_bars": sell_swing_bars,
+            "swing_definition": cfg.swing_definition,
+            "entry_offset_points": cfg.entry_offset_points,
+            "buy_entry_offset_points": buy_offset_points,
+            "sell_entry_offset_points": sell_offset_points,
             "lot_size": cfg.lot_size,
             "sl_points": cfg.sl_points,
             "tp_points": cfg.tp_points,
@@ -265,6 +301,10 @@ class AzirPythonReplica:
             "buy_entry": buy_entry,
             "sell_entry": sell_entry,
             "pending_distance_points": pending_distance_points,
+            "swing_range_points": swing_range_points,
+            "range_width_atr": range_width_atr,
+            "compression_range_atr": compression_range_atr,
+            "range_quality_enabled": cfg.range_quality_enabled,
             "spread_points": spread_points,
             "ema20": ema20,
             "prev_close": prev_close,
@@ -302,6 +342,25 @@ class AzirPythonReplica:
                 )
             ]
 
+        range_quality_passed = self._range_quality_passed(range_width_atr, compression_range_atr)
+        if cfg.range_quality_enabled and not range_quality_passed:
+            return [
+                self._event(
+                    dt,
+                    "opportunity",
+                    **common,
+                    atr_filter_passed=True,
+                    range_quality_passed=False,
+                    rsi_gate_required=False,
+                    rsi_gate_passed=True,
+                    buy_order_placed=False,
+                    sell_order_placed=False,
+                    buy_retcode=0,
+                    sell_retcode=0,
+                    notes="Range quality filter failed; no orders were sent.",
+                )
+            ]
+
         buy_placed = False
         sell_placed = False
         if cfg.allow_trend_filter:
@@ -335,6 +394,7 @@ class AzirPythonReplica:
                 "opportunity",
                 **common,
                 atr_filter_passed=True,
+                range_quality_passed=True,
                 rsi_gate_required=rsi_gate_required,
                 rsi_gate_passed=True,
                 buy_order_placed=buy_placed,
@@ -665,16 +725,16 @@ class AzirPythonReplica:
         return row
 
     def _closed_rsi_before(self, timestamp: datetime) -> float | None:
-        previous_values = [index for bar_time, index in self._rsi_index.items() if bar_time < timestamp]
-        if not previous_values:
+        index = bisect_left(self._rsi_times, timestamp) - 1
+        if index < 0:
             return None
-        return self._rsi[max(previous_values)]
+        return self._rsi[index]
 
     def _rsi_at_or_before(self, timestamp: datetime) -> float | None:
-        previous_values = [index for bar_time, index in self._rsi_index.items() if bar_time <= timestamp]
-        if not previous_values:
+        index = bisect_right(self._rsi_times, timestamp) - 1
+        if index < 0:
             return None
-        return self._rsi[max(previous_values)]
+        return self._rsi[index]
 
     def _close_index_for_day(self, setup_index: int) -> int | None:
         setup_date = self.bars[setup_index].open_time.date()
@@ -704,6 +764,75 @@ class AzirPythonReplica:
     def _gross_pnl(self, side: str, entry: float, exit_price: float) -> float:
         direction = 1.0 if side == "buy" else -1.0
         return (exit_price - entry) * direction * self.config.lot_size * self.config.contract_size
+
+    def _swing_high(self, setup_index: int, lookback: int) -> float:
+        window = self.bars[setup_index - lookback : setup_index]
+        if self.config.swing_definition == "fractal":
+            pivot = self._last_confirmed_pivot_high(setup_index, lookback)
+            if pivot is not None:
+                return pivot
+        return max(bar.high for bar in window)
+
+    def _swing_low(self, setup_index: int, lookback: int) -> float:
+        window = self.bars[setup_index - lookback : setup_index]
+        if self.config.swing_definition == "fractal":
+            pivot = self._last_confirmed_pivot_low(setup_index, lookback)
+            if pivot is not None:
+                return pivot
+        return min(bar.low for bar in window)
+
+    def _last_confirmed_pivot_high(self, setup_index: int, lookback: int) -> float | None:
+        side = max(1, self.config.fractal_side_bars)
+        start = max(0, setup_index - lookback)
+        end = setup_index
+        for index in range(end - side - 1, start + side - 1, -1):
+            candidate = self.bars[index].high
+            left = [bar.high for bar in self.bars[index - side : index]]
+            right = [bar.high for bar in self.bars[index + 1 : index + side + 1]]
+            if left and right and candidate > max(left) and candidate > max(right):
+                return candidate
+        return None
+
+    def _last_confirmed_pivot_low(self, setup_index: int, lookback: int) -> float | None:
+        side = max(1, self.config.fractal_side_bars)
+        start = max(0, setup_index - lookback)
+        end = setup_index
+        for index in range(end - side - 1, start + side - 1, -1):
+            candidate = self.bars[index].low
+            left = [bar.low for bar in self.bars[index - side : index]]
+            right = [bar.low for bar in self.bars[index + 1 : index + side + 1]]
+            if left and right and candidate < min(left) and candidate < min(right):
+                return candidate
+        return None
+
+    def _entry_offset_points(self, side: str, atr_points: float) -> float:
+        cfg = self.config
+        fixed = cfg.buy_entry_offset_points if side == "buy" else cfg.sell_entry_offset_points
+        atr_fraction = cfg.buy_entry_offset_atr_fraction if side == "buy" else cfg.sell_entry_offset_atr_fraction
+        if fixed is None:
+            fixed = cfg.entry_offset_points
+        if atr_fraction is None:
+            atr_fraction = cfg.entry_offset_atr_fraction
+        if atr_fraction is not None:
+            return atr_points * atr_fraction
+        return fixed
+
+    def _compression_range_atr(self, setup_index: int, atr_points: float) -> float:
+        lookback = max(1, self.config.compression_lookback_bars)
+        if setup_index < lookback or atr_points <= 0.0:
+            return 0.0
+        window = self.bars[setup_index - lookback : setup_index]
+        return ((max(bar.high for bar in window) - min(bar.low for bar in window)) / self.config.point) / atr_points
+
+    def _range_quality_passed(self, range_width_atr: float, compression_range_atr: float) -> bool:
+        cfg = self.config
+        if cfg.min_range_width_atr is not None and range_width_atr < cfg.min_range_width_atr:
+            return False
+        if cfg.max_range_width_atr is not None and range_width_atr > cfg.max_range_width_atr:
+            return False
+        if cfg.max_compression_range_atr is not None and compression_range_atr > cfg.max_compression_range_atr:
+            return False
+        return True
 
 
 def _mql_day_of_week(value: datetime) -> int:

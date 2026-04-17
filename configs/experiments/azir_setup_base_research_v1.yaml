@@ -1,0 +1,123 @@
+experiment: setup_base_research_for_azir_v1
+symbol: XAUUSD-STD
+benchmark: baseline_azir_protected_economic_v1
+
+selection:
+  min_delta_net_pnl: 25.0
+  max_drawdown_worsening_factor: 1.10
+  min_profit_factor: 1.05
+  min_closed_trades_factor: 0.50
+
+variants:
+  - name: azir_current_python_proxy
+    family: baseline_control
+    description: "Current Python replica settings: rolling 10-bar swing and fixed 5-point offset."
+    replica: {}
+
+  - name: swing_8_rolling
+    family: swing_definition
+    description: Use a slightly shorter rolling swing window.
+    replica:
+      swing_bars: 8
+
+  - name: swing_12_rolling
+    family: swing_definition
+    description: Use a slightly longer rolling swing window.
+    replica:
+      swing_bars: 12
+
+  - name: swing_15_rolling
+    family: swing_definition
+    description: Use a clearly longer but still local rolling swing window.
+    replica:
+      swing_bars: 15
+
+  - name: swing_10_fractal
+    family: swing_definition
+    description: Use last confirmed 2-left/2-right pivot inside the current 10-bar swing window, falling back to rolling if no pivot exists.
+    replica:
+      swing_bars: 10
+      swing_definition: fractal
+      fractal_side_bars: 2
+
+  - name: sell_only_diagnostic
+    family: buy_sell_asymmetry
+    description: Diagnostic variant to test whether the sell side is carrying setup quality.
+    replica:
+      allow_buys: false
+      allow_sells: true
+
+  - name: buy_only_diagnostic
+    family: buy_sell_asymmetry
+    description: Diagnostic variant to test whether the buy side is carrying setup quality.
+    replica:
+      allow_buys: true
+      allow_sells: false
+
+  - name: sell_friendly_swing_buy12_sell8
+    family: buy_sell_asymmetry
+    description: "Asymmetric swing: slightly more conservative buy levels and tighter sell levels."
+    replica:
+      buy_swing_bars: 12
+      sell_swing_bars: 8
+
+  - name: sell_friendly_offset_buy7_sell3
+    family: buy_sell_asymmetry
+    description: "Asymmetric offset: reduce sell breakout delay and make buy entries slightly harder."
+    replica:
+      buy_entry_offset_points: 7.0
+      sell_entry_offset_points: 3.0
+
+  - name: range_min_1_0_atr
+    family: range_quality
+    description: Block very narrow swing ranges below 1 ATR.
+    replica:
+      range_quality_enabled: true
+      min_range_width_atr: 1.0
+
+  - name: range_max_4_0_atr
+    family: range_quality
+    description: Block very wide swing ranges above 4 ATR.
+    replica:
+      range_quality_enabled: true
+      max_range_width_atr: 4.0
+
+  - name: range_band_1_0_4_0_atr
+    family: range_quality
+    description: Keep only ranges between 1 ATR and 4 ATR.
+    replica:
+      range_quality_enabled: true
+      min_range_width_atr: 1.0
+      max_range_width_atr: 4.0
+
+  - name: compression_lte_4_0_atr
+    family: range_quality
+    description: Require the previous 20-bar structure to remain below 4 ATR.
+    replica:
+      range_quality_enabled: true
+      max_compression_range_atr: 4.0
+
+  - name: offset_3_points
+    family: entry_offset
+    description: Slightly more permissive fixed offset.
+    replica:
+      entry_offset_points: 3.0
+
+  - name: offset_8_points
+    family: entry_offset
+    description: Slightly stricter fixed offset.
+    replica:
+      entry_offset_points: 8.0
+
+  - name: offset_atr_0_04
+    family: entry_offset
+    description: Replace fixed offset with 4% of current ATR points.
+    replica:
+      entry_offset_atr_fraction: 0.04
+
+  - name: offset_sell3_buy7
+    family: entry_offset
+    description: Offset asymmetry expressed as an entry-offset family test.
+    replica:
+      buy_entry_offset_points: 7.0
+      sell_entry_offset_points: 3.0
