@@ -56,6 +56,12 @@ hybrid-quant-azir-fractal-real-mt5 = "hybrid_quant.azir.fractal_candidate_real_m
 hybrid-quant-azir-fractal-protected-economic = "hybrid_quant.azir.fractal_protected_economic:main"
 hybrid-quant-azir-fractal-tick-replay = "hybrid_quant.azir.fractal_tick_replay:main"
 hybrid-quant-azir-fractal-full-lifecycle-export = "hybrid_quant.azir.fractal_full_lifecycle_export:main"
+hybrid-quant-azir-fractal-lifecycle-final-comparison = "hybrid_quant.azir.fractal_lifecycle_final_comparison:main"
+hybrid-quant-azir-fractal-clean-rerun = "hybrid_quant.azir.fractal_clean_rerun:main"
+hybrid-quant-azir-trade-protection-research = "hybrid_quant.azir.trade_protection_research:main"
+hybrid-quant-azir-trade-protection-label-diagnostics = "hybrid_quant.azir.trade_protection_label_diagnostics:main"
+hybrid-quant-azir-tick-level-trade-protection-label-replay = "hybrid_quant.azir.tick_level_trade_protection_label_replay:main"
+hybrid-quant-azir-trade-protection-threshold-refinement = "hybrid_quant.azir.trade_protection_threshold_refinement:main"
 
 [project.optional-dependencies]
 dev = [
